@@ -1,63 +1,87 @@
 // lib/dealerConfig.ts
+import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import { db } from "./firebase";
 
-// The main dealer that finally receives the sales
-export const MASTER_DEALER_CODE = "030520";
-
-/**
- * All alias dealers that should be treated as MASTER_DEALER_CODE.
- * You can edit this list any time without touching other code.
- */
-export const dealerAliasMap: Record<string, string> = {
-  "030589": MASTER_DEALER_CODE,
-  "030802": MASTER_DEALER_CODE,
-  // You can add more real numeric aliases here
-  // "031000": MASTER_DEALER_CODE,
-};
-
-/**
- * Normalise any raw dealer code:
- * - strip spaces
- * - keep only digits
- * - pad to 6 digits
- * - map alias → master dealer if configured
- */
-export function normalizeDealerCode(raw: string): string {
-  let code = raw.trim();
-  if (!code) return code;
-
-  // only digits
-  code = code.replace(/[^\d]/g, "");
-
-  // normalise to 6 digits
-  code = code.padStart(6, "0");
-
-  // alias map
-  return dealerAliasMap[code] ?? code;
+// ------------------------------------------------
+// Ensure master document exists
+// ------------------------------------------------
+async function ensureMasterDoc() {
+  const ref = doc(db, "dealer_config", "master");
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    await setDoc(ref, { code: "000000" });
+  }
 }
 
-// Optional: config validation (runs once at build/server start)
-(function validateDealerConfig() {
-  const codeRegex = /^\d{6}$/;
+// ------------------------------------------------
+// Ensure alias document exists with correct shape
+// ------------------------------------------------
+async function ensureAliasesDoc() {
+  const ref = doc(db, "dealer_config", "aliases");
+  const snap = await getDoc(ref);
 
-  if (!codeRegex.test(MASTER_DEALER_CODE)) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[dealerConfig] MASTER_DEALER_CODE is invalid: ${MASTER_DEALER_CODE}`
-    );
+  if (!snap.exists()) {
+    await setDoc(ref, { items: {} });
+    return;
   }
 
-  for (const [alias, target] of Object.entries(dealerAliasMap)) {
-    if (!codeRegex.test(alias) || !codeRegex.test(target)) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[dealerConfig] dealerAliasMap has invalid format: ${alias} -> ${target}`
-      );
-    }
-    if (alias === target) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[dealerConfig] dealerAliasMap alias and target are the same: ${alias}`
-      );
+  const data = snap.data();
+  if (!data.items || typeof data.items !== "object") {
+    await setDoc(ref, { items: {} });
+  }
+}
+
+// ------------------------------------------------
+// Get master dealer code
+// ------------------------------------------------
+export async function getMasterDealerCode(): Promise<string> {
+  await ensureMasterDoc();
+  const snap = await getDoc(doc(db, "dealer_config", "master"));
+  return snap.data()?.code ?? "000000";
+}
+
+// ------------------------------------------------
+// Set master dealer code
+// ------------------------------------------------
+export async function setMasterDealerCode(code: string) {
+  await ensureMasterDoc();
+  await updateDoc(doc(db, "dealer_config", "master"), { code });
+}
+
+// ------------------------------------------------
+// Get alias mappings
+// ------------------------------------------------
+export async function getDealerAliases(): Promise<Record<string, string>> {
+  await ensureAliasesDoc();
+
+  const snap = await getDoc(doc(db, "dealer_config", "aliases"));
+  const data = snap.data();
+
+  if (!data?.items || typeof data.items !== "object") return {};
+
+  const clean: Record<string, string> = {};
+
+  for (const [k, v] of Object.entries(data.items)) {
+    if (typeof k === "string" && typeof v === "string") {
+      clean[k] = v;
     }
   }
-})();
+
+  return clean;
+}
+
+// ------------------------------------------------
+// Update alias mapping
+// ------------------------------------------------
+export async function updateDealerAliases(map: Record<string, string>) {
+  await ensureAliasesDoc();
+
+  const clean: Record<string, string> = {};
+
+  for (const [k, v] of Object.entries(map || {})) {
+    if (!k || !v) continue;
+    clean[k.padStart(6, "0")] = v.padStart(6, "0");
+  }
+
+  await updateDoc(doc(db, "dealer_config", "aliases"), { items: clean });
+}

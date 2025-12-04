@@ -25,6 +25,8 @@ import {
   listUploadedFilesByDate,
   deleteUploadedFile,
 } from "./lib/uploadService";
+import DealerAliasEditor from "./components/DealerAliasEditor";
+import MasterDealerEditor from "./components/MasterDealerEditor";
 
 // Each uploaded file has its own breaking config / validation
 type FileConfig = {
@@ -373,7 +375,7 @@ export default function HomePage() {
         }
         // Case 3: no valid filtering config → keep full file (no segments)
 
-        const structuredRowsForFile = buildStructuredRows(
+        const structuredRowsForFile = await buildStructuredRows(
           normalized,
           segments,
           gameNameOverride
@@ -569,7 +571,26 @@ export default function HomePage() {
               Master section to add your first game.
             </p>
           )}
-        </section>
+        </section> 
+        {/* Dealer Configuration */}
+        {/* Dealer Configuration */}
+<section className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-3">
+  <h2 className="text-sm font-medium text-gray-800">
+    Dealer Mapping Configuration
+  </h2>
+
+  <p className="text-[11px] text-gray-600">
+    Configure how ERP dealer codes are normalized.  
+    The master dealer receives credit, alias dealers are mapped to it.
+  </p>
+
+  {/* Master Dealer Code Component */}
+  <MasterDealerEditor />
+
+  {/* Alias Dealer List Component */}
+  <DealerAliasEditor />
+</section>
+
 
         {/* Upload + per-file config */}
         <form onSubmit={handleSubmit} className="space-y-4">
