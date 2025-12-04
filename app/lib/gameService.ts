@@ -7,8 +7,6 @@ import {
   doc,
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { GameDef } from "./types";
-
 const GAMES_COLLECTION = "games";
 
 export async function fetchGames(): Promise<GameDef[]> {
