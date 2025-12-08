@@ -59,6 +59,7 @@ export function renderCell(v: Cell): string {
 // Detection helpers
 // -------------------------------------------------------------
 export async function detectDealerCode(row: Cell[]): Promise<string | null> {
+  // Normal dealer codes (5 or 6 digits)
   for (const cell of row) {
     const n = toNumber(cell);
     if (n != null) {
@@ -69,6 +70,7 @@ export async function detectDealerCode(row: Cell[]): Promise<string | null> {
     }
   }
 
+  // Special "?????" → master dealer
   for (const cell of row) {
     if (typeof cell === "string" && cell.includes("?")) {
       await loadDealerConfig();
@@ -150,6 +152,7 @@ function splitBySegments(
 
   segments = Array.isArray(segments) ? segments : [];
 
+  // No breaking list → single continuous range
   if (segments.length === 0) {
     return [
       {
@@ -187,7 +190,7 @@ function splitBySegments(
 }
 
 // -------------------------------------------------------------
-// MAIN builder (safe, no spread errors)
+// MAIN builder (with MASTER gap handling)
 // -------------------------------------------------------------
 export async function buildStructuredRows(
   data: Cell[][],
@@ -196,19 +199,15 @@ export async function buildStructuredRows(
 ): Promise<StructuredRow[]> {
 
   await loadDealerConfig();
-
   breakingSegments = Array.isArray(breakingSegments) ? breakingSegments : [];
 
-  // Game detection
+  // ---------------- Game detection ----------------
   let gameName: string = gameNameOverride?.trim() || "";
 
   if (!gameName) {
     for (const row of data) {
       for (const cell of row) {
-        if (
-          typeof cell === "string" &&
-          cell.includes("ITEM :")
-        ) {
+        if (typeof cell === "string" && cell.includes("ITEM :")) {
           gameName = cell.replace("ITEM :", "").trim();
           break;
         }
@@ -217,7 +216,7 @@ export async function buildStructuredRows(
     }
   }
 
-  // Draw date
+  // ---------------- Draw date detection ----------------
   let drawDate = "";
   const dateRe = /\d{4}-\d{2}-\d{2}/;
 
@@ -233,7 +232,7 @@ export async function buildStructuredRows(
   const dealerRows: { rowIndex: number; dealerCode: string; toBarcode: number }[] = [];
   const out: InternalRow[] = [];
 
-  // MAIN dealer rows
+  // ---------------- MAIN dealer rows ----------------
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
 
@@ -245,36 +244,64 @@ export async function buildStructuredRows(
 
     dealerRows.push({ rowIndex: i, dealerCode: dealer, toBarcode: to });
 
-    const split = splitBySegments(dealer, from, to, gameName, drawDate, i, breakingSegments);
+    const split = splitBySegments(
+      dealer,
+      from,
+      to,
+      gameName,
+      drawDate,
+      i,
+      breakingSegments
+    );
+
     if (Array.isArray(split)) out.push(...split);
   }
 
-  // GAP rows
+  // ---------------- GAP rows (#) → ALWAYS MASTER ----------------
+  const masterDealer = (cachedMaster || "030520").padStart(6, "0");
+
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
 
+    // Only rows that contain "#"
     if (!hasHashMarker(row)) continue;
 
     const { from: nextStart } = detectBarcodes(row);
     if (nextStart == null) continue;
 
+    // Find previous dealer line above this gap marker
     const prev = dealerRows
       .filter((d) => d.rowIndex < i)
       .sort((a, b) => b.rowIndex - a.rowIndex)[0];
 
     if (!prev) continue;
 
-    const gapQty = nextStart - prev.toBarcode - 1;
-    if (gapQty <= 0) continue;
-
     const gapFrom = prev.toBarcode + 1;
     const gapTo = nextStart - 1;
+    const gapQty = gapTo - gapFrom + 1;
 
-    const split = splitBySegments(prev.dealerCode, gapFrom, gapTo, gameName, drawDate, i - 0.1, breakingSegments);
+    if (gapQty <= 0) continue;
+
+    // Optional debug:
+    console.log(
+      `[ERP] GAP detected → MASTER ${masterDealer} : ${gapFrom} → ${gapTo} (qty=${gapQty})`
+    );
+
+    // Note: dealer = masterDealer (NOT prev.dealerCode)
+    const split = splitBySegments(
+      masterDealer,
+      gapFrom,
+      gapTo,
+      gameName,
+      drawDate,
+      i - 0.1,
+      breakingSegments
+    );
 
     if (Array.isArray(split)) out.push(...split);
   }
 
+  // ---------------- Final sort & projection ----------------
   out.sort((a, b) => a.rowIndex - b.rowIndex);
 
   return out.map((r) => ({
