@@ -10,12 +10,12 @@ import {
 } from "react";
 import * as XLSX from "xlsx";
 import {
-  buildBreakingSegments,
   buildStructuredRows,
   Cell,
   StructuredRow,
   renderCell,
   toNumber,
+  BreakingSegment,
 } from "./lib/erpTransformer";
 import { GameDef, fetchGames } from "./lib/gameService";
 import { GameAdmin } from "./components/GameAdmin";
@@ -28,16 +28,26 @@ import {
 import DealerAliasEditor from "./components/DealerAliasEditor";
 import MasterDealerEditor from "./components/MasterDealerEditor";
 
-// Each uploaded file has its own breaking config / validation
+// Per-file available block for today’s stock
+type AvailabilityBlock = {
+  id: string;
+  from: string; // UI text
+  to: string;   // UI text
+};
+
+// Each uploaded file has its own config
 type FileConfig = {
   id: string;
   file: File;
   gameId: string; // Firestore Game document id
 
-  totalFrom: string; // UI text
-  totalTo: string; // UI text
-  breakDraft: string; // current input for a single breaking qty
-  breakSizes: number[]; // list of breaking quantities
+  // Available blocks (FROM–TO)
+  blocks: AvailabilityBlock[];
+  blockDraftFrom: string;
+  blockDraftTo: string;
+
+  // Gap filling behaviour
+  enableGapFill: boolean;
 
   validationWarning: string | null;
 };
@@ -49,6 +59,62 @@ function todayKey(): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+// Build a merged, sorted list of availability segments from the UI blocks
+function buildAvailabilitySegments(blocks: AvailabilityBlock[]): BreakingSegment[] {
+  const raw: BreakingSegment[] = [];
+
+  for (const b of blocks) {
+    const fromNum = toNumber(b.from as Cell);
+    const toNum = toNumber(b.to as Cell);
+    if (fromNum !== null && toNum !== null && fromNum <= toNum) {
+      raw.push({ start: fromNum, end: toNum });
+    }
+  }
+
+  if (raw.length === 0) return [];
+
+  raw.sort((a, b) => a.start - b.start);
+
+  const merged: BreakingSegment[] = [];
+  for (const seg of raw) {
+    if (merged.length === 0) {
+      merged.push({ ...seg });
+      continue;
+    }
+    const last = merged[merged.length - 1];
+    if (seg.start <= last.end + 1) {
+      last.end = Math.max(last.end, seg.end);
+    } else {
+      merged.push({ ...seg });
+    }
+  }
+
+  return merged;
+}
+
+// Simple validation: check blocks that have partial data or FROM>TO
+function recalcValidationBlocks(blocks: AvailabilityBlock[]): string | null {
+  for (const b of blocks) {
+    const hasFrom = !!b.from.trim();
+    const hasTo = !!b.to.trim();
+    if (hasFrom !== hasTo) {
+      return `Block with FROM "${b.from}" and TO "${b.to}" is incomplete. Both are required or leave both empty.`;
+    }
+
+    if (hasFrom && hasTo) {
+      const fromNum = toNumber(b.from as Cell);
+      const toNum = toNumber(b.to as Cell);
+      if (fromNum === null || toNum === null) {
+        return `Block "${b.from}–${b.to}" must be numeric barcodes.`;
+      }
+      if (fromNum > toNum) {
+        return `Block "${b.from}–${b.to}" has FROM greater than TO.`;
+      }
+    }
+  }
+  return null;
 }
 
 export default function HomePage() {
@@ -84,25 +150,7 @@ export default function HomePage() {
   const [savingFileId, setSavingFileId] = useState<string | null>(null);
   const [deletingUploadId, setDeletingUploadId] = useState<string | null>(null);
 
-  // ------------- Helpers -------------
-
-  function recalcValidation(
-    totalFrom: string,
-    totalTo: string,
-    breakSizes: number[]
-  ): string | null {
-    const fromNum = toNumber(totalFrom as Cell);
-    const toNum = toNumber(totalTo as Cell);
-    const sumBreaks = breakSizes.reduce((s, v) => s + v, 0);
-
-    if (fromNum !== null && toNum !== null && sumBreaks > 0) {
-      const derivedTo = fromNum + sumBreaks - 1;
-      if (derivedTo !== toNum) {
-        return `FROM (${fromNum}) + Σbreaks (${sumBreaks}) - 1 = ${derivedTo}, but TO = ${toNum}.`;
-      }
-    }
-    return null;
-  }
+  // ------------- FileConfig update helper -------------
 
   function updateFileConfig(
     cfgId: string,
@@ -112,12 +160,7 @@ export default function HomePage() {
       prev.map((cfg) => {
         if (cfg.id !== cfgId) return cfg;
         const updated = updater(cfg);
-        // Always recalc validation after any change
-        const warning = recalcValidation(
-          updated.totalFrom,
-          updated.totalTo,
-          updated.breakSizes
-        );
+        const warning = recalcValidationBlocks(updated.blocks);
         return { ...updated, validationWarning: warning };
       })
     );
@@ -191,10 +234,18 @@ export default function HomePage() {
         file: f,
         gameId: "",
 
-        totalFrom: "",
-        totalTo: "",
-        breakDraft: "",
-        breakSizes: [],
+        blocks: [
+          {
+            id: `block-1-${i}-${now}`,
+            from: "",
+            to: "",
+          },
+        ],
+        blockDraftFrom: "",
+        blockDraftTo: "",
+
+        enableGapFill: true,
+
         validationWarning: null,
       });
     }
@@ -322,6 +373,12 @@ export default function HomePage() {
         setError(`Please select a game for file: ${cfg.file.name}`);
         return;
       }
+      if (cfg.validationWarning) {
+        setError(
+          `Please fix availability blocks for file: ${cfg.file.name} → ${cfg.validationWarning}`
+        );
+        return;
+      }
     }
 
     setIsLoading(true);
@@ -359,26 +416,14 @@ export default function HomePage() {
           return newRow;
         });
 
-        // Build breaking / filtering segments for THIS file
-        const fromNum = toNumber(cfg.totalFrom as Cell);
-        const toNum = toNumber(cfg.totalTo as Cell);
-
-        let segments: { start: number; end: number }[] = [];
-
-        // Case 1: FROM + breaking list → multi segments
-        if (fromNum !== null && cfg.breakSizes.length > 0) {
-          segments = buildBreakingSegments(fromNum, cfg.breakSizes);
-        }
-        // Case 2: only FROM + TO → single continuous filter range
-        else if (fromNum !== null && toNum !== null) {
-          segments = [{ start: fromNum, end: toNum }];
-        }
-        // Case 3: no valid filtering config → keep full file (no segments)
+        // Build availability segments (all today’s blocks) for THIS file
+        const availabilitySegments = buildAvailabilitySegments(cfg.blocks);
 
         const structuredRowsForFile = await buildStructuredRows(
           normalized,
-          segments,
-          gameNameOverride
+          availabilitySegments,
+          gameNameOverride,
+          cfg.enableGapFill
         );
 
         allStructured.push(...structuredRowsForFile);
@@ -439,7 +484,7 @@ export default function HomePage() {
     <main className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-900">
       <div className="w-full max-w-6xl p-6 rounded-lg bg-white shadow border border-gray-300 space-y-6">
         <h1 className="text-xl font-semibold">
-          ERP Summary → Structured Dealer Table (multi-game, per-file breaking)
+          ERP Summary → Structured Dealer Table (multi-game, per-file ranges)
         </h1>
 
         {/* Business Date + Upload History */}
@@ -571,26 +616,22 @@ export default function HomePage() {
               Master section to add your first game.
             </p>
           )}
-        </section> 
+        </section>
+
         {/* Dealer Configuration */}
-        {/* Dealer Configuration */}
-<section className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-3">
-  <h2 className="text-sm font-medium text-gray-800">
-    Dealer Mapping Configuration
-  </h2>
+        <section className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-3">
+          <h2 className="text-sm font-medium text-gray-800">
+            Dealer Mapping Configuration
+          </h2>
 
-  <p className="text-[11px] text-gray-600">
-    Configure how ERP dealer codes are normalized.  
-    The master dealer receives credit, alias dealers are mapped to it.
-  </p>
+          <p className="text-[11px] text-gray-600">
+            Configure how ERP dealer codes are normalized.  
+            The master dealer receives credit, alias dealers are mapped to it.
+          </p>
 
-  {/* Master Dealer Code Component */}
-  <MasterDealerEditor />
-
-  {/* Alias Dealer List Component */}
-  <DealerAliasEditor />
-</section>
-
+          <MasterDealerEditor />
+          <DealerAliasEditor />
+        </section>
 
         {/* Upload + per-file config */}
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -610,9 +651,7 @@ export default function HomePage() {
               />
               <p className="mt-1 text-[11px] text-gray-500">
                 Select multiple files (each file = one game). Every file gets
-                its own breaking config below. You can save raw files to
-                Firebase for this date before or after building structured
-                tables.
+                its own stock block config and gap-fill behaviour.
               </p>
             </div>
 
@@ -620,16 +659,6 @@ export default function HomePage() {
             {fileConfigs.length > 0 && (
               <div className="space-y-3">
                 {fileConfigs.map((cfg, index) => {
-                  const sumBreaks = cfg.breakSizes.reduce(
-                    (s, v) => s + v,
-                    0
-                  );
-                  const fromNum = toNumber(cfg.totalFrom as Cell);
-                  const derivedTo =
-                    fromNum !== null && sumBreaks > 0
-                      ? fromNum + sumBreaks - 1
-                      : null;
-
                   const canSave =
                     !!selectedDate && !!cfg.gameId && !savingFileId;
 
@@ -690,155 +719,178 @@ export default function HomePage() {
                         </select>
                       </div>
 
-                      {/* Breaking config for THIS file */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
-                        <div>
-                          <label className="block text-xs mb-1 text-gray-700">
-                            Total FROM barcode
-                          </label>
-                          <input
-                            type="text"
-                            value={cfg.totalFrom}
-                            onChange={(e) =>
-                              updateFileConfig(cfg.id, (old) => ({
-                                ...old,
-                                totalFrom: e.target.value,
-                              }))
-                            }
-                            className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
-                            placeholder="e.g. 648051244"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs mb-1 text-gray-700">
-                            Total TO barcode (official)
-                          </label>
-                          <input
-                            type="text"
-                            value={cfg.totalTo}
-                            onChange={(e) =>
-                              updateFileConfig(cfg.id, (old) => ({
-                                ...old,
-                                totalTo: e.target.value,
-                              }))
-                            }
-                            className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
-                            placeholder="e.g. 648051325"
-                          />
-                          <p className="mt-1 text-[11px] text-gray-500">
-                            Used only for validation and continuous range filter
-                            when there is no breaking list.
-                          </p>
-                        </div>
-
-                        <div>
-                          <label className="block text-xs mb-1 text-gray-700">
-                            Add breaking quantity
-                          </label>
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={cfg.breakDraft}
-                              onChange={(e) =>
-                                updateFileConfig(cfg.id, (old) => ({
-                                  ...old,
-                                  breakDraft: e.target.value,
-                                }))
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  const cleaned =
-                                    cfg.breakDraft.replace(/[^\d-]/g, "");
-                                  if (!cleaned) return;
-                                  const n = Number(cleaned);
-                                  if (!Number.isFinite(n) || n <= 0) return;
-                                  updateFileConfig(cfg.id, (old) => ({
-                                    ...old,
-                                    breakSizes: [
-                                      ...old.breakSizes,
-                                      Math.trunc(n),
-                                    ],
-                                    breakDraft: "",
-                                  }));
-                                }
-                              }}
-                              className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm bg-white"
-                              placeholder="e.g. 62"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const cleaned =
-                                  cfg.breakDraft.replace(/[^\d-]/g, "");
-                                if (!cleaned) return;
-                                const n = Number(cleaned);
-                                if (!Number.isFinite(n) || n <= 0) return;
-                                updateFileConfig(cfg.id, (old) => ({
-                                  ...old,
-                                  breakSizes: [
-                                    ...old.breakSizes,
-                                    Math.trunc(n),
-                                  ],
-                                  breakDraft: "",
-                                }));
-                              }}
-                              className="px-3 py-1.5 rounded bg-blue-600 text-white text-xs font-medium"
-                            >
-                              Add
-                            </button>
-                          </div>
-                          <p className="mt-1 text-[11px] text-gray-500">
-                            Enter breaks in order from official site (e.g. 62, 20,
-                            30, 440).
-                          </p>
-                        </div>
+                      {/* Gap fill toggle */}
+                      <div className="mt-2 flex items-center gap-2">
+                        <input
+                          id={`gap-${cfg.id}`}
+                          type="checkbox"
+                          checked={cfg.enableGapFill}
+                          onChange={(e) =>
+                            updateFileConfig(cfg.id, (old) => ({
+                              ...old,
+                              enableGapFill: e.target.checked,
+                            }))
+                          }
+                          className="h-3 w-3"
+                        />
+                        <label
+                          htmlFor={`gap-${cfg.id}`}
+                          className="text-[11px] text-gray-800"
+                        >
+                          Enable master gap filling inside available blocks
+                          (rows with &quot;#&quot; will create MASTER ranges).
+                        </label>
                       </div>
 
-                      {/* Break list + derived info */}
-                      {cfg.breakSizes.length > 0 && (
-                        <div className="mt-2 text-[11px] text-gray-800 space-y-1">
-                          <div className="flex flex-wrap gap-1">
-                            {cfg.breakSizes.map((q, idx) => (
-                              <span
-                                key={idx}
-                                className="px-2 py-0.5 rounded-full bg-gray-200 border border-gray-400"
-                              >
-                                {idx + 1}. {q}
+                      {/* Availability blocks */}
+                      <div className="mt-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-gray-800">
+                            Available stock blocks (FROM–TO)
+                          </span>
+                          <span className="text-[11px] text-gray-500">
+                            e.g. 831243421–831243720 and 831254256–831254355
+                          </span>
+                        </div>
+
+                        {/* Existing blocks list */}
+                        <div className="space-y-1">
+                          {cfg.blocks.map((b, idx) => (
+                            <div
+                              key={b.id}
+                              className="flex items-center gap-2 text-[11px]"
+                            >
+                              <span className="w-5 text-right">
+                                {idx + 1}.
                               </span>
-                            ))}
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>
-                              Σbreaks: {sumBreaks}
-                              {derivedTo !== null &&
-                                fromNum !== null && (
-                                  <> | FROM + Σ - 1 = {derivedTo}</>
-                                )}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() =>
+                              <input
+                                type="text"
+                                value={b.from}
+                                onChange={(e) =>
+                                  updateFileConfig(cfg.id, (old) => ({
+                                    ...old,
+                                    blocks: old.blocks.map((bb) =>
+                                      bb.id === b.id
+                                        ? { ...bb, from: e.target.value }
+                                        : bb
+                                    ),
+                                  }))
+                                }
+                                className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs bg-white"
+                                placeholder="FROM barcode"
+                              />
+                              <span className="text-gray-600">→</span>
+                              <input
+                                type="text"
+                                value={b.to}
+                                onChange={(e) =>
+                                  updateFileConfig(cfg.id, (old) => ({
+                                    ...old,
+                                    blocks: old.blocks.map((bb) =>
+                                      bb.id === b.id
+                                        ? { ...bb, to: e.target.value }
+                                        : bb
+                                    ),
+                                  }))
+                                }
+                                className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs bg-white"
+                                placeholder="TO barcode"
+                              />
+                              {cfg.blocks.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateFileConfig(cfg.id, (old) => ({
+                                      ...old,
+                                      blocks: old.blocks.filter(
+                                        (bb) => bb.id !== b.id
+                                      ),
+                                    }))
+                                  }
+                                  className="px-2 py-0.5 rounded border border-gray-300 bg-white"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* New block draft row */}
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <span className="w-5 text-right">+</span>
+                          <input
+                            type="text"
+                            value={cfg.blockDraftFrom}
+                            onChange={(e) =>
+                              updateFileConfig(cfg.id, (old) => ({
+                                ...old,
+                                blockDraftFrom: e.target.value,
+                              }))
+                            }
+                            className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs bg-white"
+                            placeholder="FROM barcode"
+                          />
+                          <span className="text-gray-600">→</span>
+                          <input
+                            type="text"
+                            value={cfg.blockDraftTo}
+                            onChange={(e) =>
+                              updateFileConfig(cfg.id, (old) => ({
+                                ...old,
+                                blockDraftTo: e.target.value,
+                              }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                const from = cfg.blockDraftFrom.trim();
+                                const to = cfg.blockDraftTo.trim();
+                                if (!from || !to) return;
+                                const newId = `block-${Date.now()}-${Math.random()}`;
                                 updateFileConfig(cfg.id, (old) => ({
                                   ...old,
-                                  breakSizes: [],
-                                }))
+                                  blocks: [
+                                    ...old.blocks,
+                                    { id: newId, from, to },
+                                  ],
+                                  blockDraftFrom: "",
+                                  blockDraftTo: "",
+                                }));
                               }
-                              className="text-[11px] px-2 py-0.5 rounded border border-gray-300 bg-white"
-                            >
-                              Clear breaking list
-                            </button>
-                          </div>
+                            }}
+                            className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs bg-white"
+                            placeholder="TO barcode"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const from = cfg.blockDraftFrom.trim();
+                              const to = cfg.blockDraftTo.trim();
+                              if (!from || !to) return;
+                              const newId = `block-${Date.now()}-${Math.random()}`;
+                              updateFileConfig(cfg.id, (old) => ({
+                                ...old,
+                                blocks: [
+                                  ...old.blocks,
+                                  { id: newId, from, to },
+                                ],
+                                blockDraftFrom: "",
+                                blockDraftTo: "",
+                              }));
+                            }}
+                            className="px-3 py-1.5 rounded bg-blue-600 text-white text-xs font-medium"
+                          >
+                            Add block
+                          </button>
                         </div>
-                      )}
 
-                      {/* Per-file validation */}
-                      {cfg.validationWarning && (
-                        <p className="mt-1 text-[11px] text-amber-700">
-                          {cfg.validationWarning}
-                        </p>
-                      )}
+                        {cfg.validationWarning && (
+                          <p className="mt-1 text-[11px] text-amber-700">
+                            {cfg.validationWarning}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -972,10 +1024,9 @@ export default function HomePage() {
           !isLoading &&
           !error && (
             <p className="text-xs text-gray-600">
-              Upload one or more ERP Summary files, configure per-file breaking
-              and game mapping, optionally save raw files to Firebase by date,
-              then build a single combined structured Excel for your Power
-              Automate flow.
+              Upload one or more ERP Summary files, define available stock
+              blocks and gap behaviour per file, then build a single combined
+              structured Excel for your Power Automate flow.
             </p>
           )}
       </div>

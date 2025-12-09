@@ -102,7 +102,7 @@ export function hasHashMarker(row: Cell[]): boolean {
 }
 
 // -------------------------------------------------------------
-// Breaking logic
+// Breaking logic (still available if needed elsewhere)
 // -------------------------------------------------------------
 export function buildBreakingSegments(
   totalFrom: number | null,
@@ -139,6 +139,7 @@ type InternalRow = {
 
 // -------------------------------------------------------------
 // Splitting logic → guaranteed array
+// segments here represent "allowed / available" ranges
 // -------------------------------------------------------------
 function splitBySegments(
   dealerCode: string,
@@ -152,7 +153,7 @@ function splitBySegments(
 
   segments = Array.isArray(segments) ? segments : [];
 
-  // No breaking list → single continuous range
+  // No segments → keep full range as-is
   if (segments.length === 0) {
     return [
       {
@@ -190,12 +191,14 @@ function splitBySegments(
 }
 
 // -------------------------------------------------------------
-// MAIN builder (with MASTER gap handling)
+// MAIN builder (with optional MASTER gap handling)
+// breakingSegments here = "available stock blocks" for this file
 // -------------------------------------------------------------
 export async function buildStructuredRows(
   data: Cell[][],
   breakingSegments: BreakingSegment[] = [],
-  gameNameOverride?: string
+  gameNameOverride?: string,
+  gapFillEnabled: boolean = true
 ): Promise<StructuredRow[]> {
 
   await loadDealerConfig();
@@ -257,48 +260,49 @@ export async function buildStructuredRows(
     if (Array.isArray(split)) out.push(...split);
   }
 
-  // ---------------- GAP rows (#) → ALWAYS MASTER ----------------
+  // ---------------- GAP rows (#) → MASTER (optional) ----------------
   const masterDealer = (cachedMaster || "030520").padStart(6, "0");
 
-  for (let i = 0; i < data.length; i++) {
-    const row = data[i];
+  if (gapFillEnabled) {
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
 
-    // Only rows that contain "#"
-    if (!hasHashMarker(row)) continue;
+      // Only rows that contain "#"
+      if (!hasHashMarker(row)) continue;
 
-    const { from: nextStart } = detectBarcodes(row);
-    if (nextStart == null) continue;
+      const { from: nextStart } = detectBarcodes(row);
+      if (nextStart == null) continue;
 
-    // Find previous dealer line above this gap marker
-    const prev = dealerRows
-      .filter((d) => d.rowIndex < i)
-      .sort((a, b) => b.rowIndex - a.rowIndex)[0];
+      // Find previous dealer line above this gap marker
+      const prev = dealerRows
+        .filter((d) => d.rowIndex < i)
+        .sort((a, b) => b.rowIndex - a.rowIndex)[0];
 
-    if (!prev) continue;
+      if (!prev) continue;
 
-    const gapFrom = prev.toBarcode + 1;
-    const gapTo = nextStart - 1;
-    const gapQty = gapTo - gapFrom + 1;
+      const gapFrom = prev.toBarcode + 1;
+      const gapTo = nextStart - 1;
+      const gapQty = gapTo - gapFrom + 1;
 
-    if (gapQty <= 0) continue;
+      if (gapQty <= 0) continue;
 
-    // Optional debug:
-    console.log(
-      `[ERP] GAP detected → MASTER ${masterDealer} : ${gapFrom} → ${gapTo} (qty=${gapQty})`
-    );
+      // Debug if needed
+      console.log(
+        `[ERP] GAP detected → MASTER ${masterDealer} : ${gapFrom} → ${gapTo} (qty=${gapQty})`
+      );
 
-    // Note: dealer = masterDealer (NOT prev.dealerCode)
-    const split = splitBySegments(
-      masterDealer,
-      gapFrom,
-      gapTo,
-      gameName,
-      drawDate,
-      i - 0.1,
-      breakingSegments
-    );
+      const split = splitBySegments(
+        masterDealer,
+        gapFrom,
+        gapTo,
+        gameName,
+        drawDate,
+        i - 0.1,
+        breakingSegments
+      );
 
-    if (Array.isArray(split)) out.push(...split);
+      if (Array.isArray(split)) out.push(...split);
+    }
   }
 
   // ---------------- Final sort & projection ----------------
