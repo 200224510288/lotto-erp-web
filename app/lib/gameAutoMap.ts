@@ -92,27 +92,23 @@ export function detectERPCodeFromFileNameForDay(
 
   const upper = (fileName || "").toUpperCase();
 
-  // Extract 2–3 letter tokens bounded by non-letters
-  const re = /(?:^|[^A-Z])([A-Z]{2,3})(?=[^A-Z]|$)/g;
+  // 0) SAFE substring scan FIRST (prefer longer codes like SFW before SW)
+  const allowedSorted = [...allowed].sort((a, b) => b.length - a.length);
+  for (const code of allowedSorted) {
+    if (upper.includes(code)) return code;
+  }
 
-  const tokens: string[] = [];
+  // 1) token match (kept as secondary)
+  const re = /(?:^|[^A-Z])([A-Z]{2,3})(?=[^A-Z]|$)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(upper)) !== null) {
-    tokens.push(m[1]);
-  }
-
-  // 1) exact token match
-  for (const t of tokens) {
+    const t = m[1];
     if (dayMap[t]) return t;
-  }
-
-  // 2) substring fallback
-  for (const code of allowed) {
-    if (upper.includes(code)) return code;
   }
 
   return null;
 }
+
 
 export function mapERPToOfficial(day: keyof typeof ERP_GAME_MAP, erpCode: string): string | null {
   const key = (erpCode || "").toUpperCase();

@@ -2,7 +2,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState, ChangeEvent } from "react";
+import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 
 import {
@@ -14,9 +14,6 @@ import {
   BreakingSegment,
 } from "./lib/erpTransformer";
 
-import { GameDef, fetchGames } from "./lib/gameService";
-import { GameAdmin } from "./components/GameAdmin";
-
 import {
   UploadedFileRecord,
   saveUploadedFile,
@@ -26,6 +23,8 @@ import {
 
 import DealerAliasEditor from "./components/DealerAliasEditor";
 import MasterDealerEditor from "./components/MasterDealerEditor";
+
+import { OFFICIAL_GAMES, suggestGameFromFileName } from "./lib/gameAutoSelect";
 
 // Per-file available block for today’s stock
 type AvailabilityBlock = {
@@ -38,7 +37,14 @@ type AvailabilityBlock = {
 type FileConfig = {
   id: string;
   file: File;
-  gameId: string; // Firestore Game document id
+
+  // Selected game (OFFICIAL CODE, e.g., "SFT")
+  gameId: string;
+
+  // Auto-detect safety
+  autoDetectedGameId: string | null;
+  autoDetectNote: string | null;
+  autoDetectStatus: "ok" | "mismatch_day" | "ambiguous" | "not_found";
 
   // Available blocks (FROM–TO)
   blocks: AvailabilityBlock[];
@@ -134,11 +140,6 @@ export default function HomePage() {
   const [downloadBlob, setDownloadBlob] = useState<Blob | null>(null);
   const [fileName, setFileName] = useState<string>("Structured.xlsx");
 
-  // Games (from Firebase)
-  const [games, setGames] = useState<GameDef[]>([]);
-  const [gamesLoading, setGamesLoading] = useState(false);
-  const [gamesError, setGamesError] = useState<string | null>(null);
-
   // Uploaded files + per-file config (for current local run)
   const [fileConfigs, setFileConfigs] = useState<FileConfig[]>([]);
 
@@ -163,21 +164,6 @@ export default function HomePage() {
     );
   }
 
-  // ------------- Load games -------------
-  async function loadGames() {
-    setGamesError(null);
-    setGamesLoading(true);
-    try {
-      const list = await fetchGames();
-      setGames(list);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Error loading games.";
-      setGamesError(errorMessage || "Error loading games.");
-    } finally {
-      setGamesLoading(false);
-    }
-  }
-
   // ------------- Load uploads for selected date -------------
   async function loadUploads(dateKey: string) {
     if (!dateKey) return;
@@ -195,16 +181,60 @@ export default function HomePage() {
     }
   }
 
+  // ------------- Apply auto-detection (NO manual selection) -------------
+  function applyAutoDetection(dateKey: string, configs: FileConfig[]): FileConfig[] {
+    return configs.map((cfg) => {
+      const s = suggestGameFromFileName(cfg.file.name, dateKey);
+
+      if (s.status === "ok") {
+        return {
+          ...cfg,
+          gameId: s.official,
+          autoDetectedGameId: s.official,
+          autoDetectNote: s.note,
+          autoDetectStatus: "ok",
+        };
+      }
+
+      if (s.status === "mismatch_day") {
+        return {
+          ...cfg,
+          // Still show which game it really is, but block processing
+          gameId: s.official,
+          autoDetectedGameId: s.official,
+          autoDetectNote: s.note,
+          autoDetectStatus: "mismatch_day",
+        };
+      }
+
+      // ambiguous / not_found → block (no game)
+      return {
+        ...cfg,
+        gameId: "",
+        autoDetectedGameId: null,
+        autoDetectNote: s.note,
+        autoDetectStatus: s.status,
+      };
+    });
+  }
+
   // ------------- Initial load -------------
   useEffect(() => {
-    void loadGames();
     void loadUploads(selectedDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ------------- Re-run auto-detection when date changes -------------
+  useEffect(() => {
+    if (fileConfigs.length === 0) return;
+    setFileConfigs((prev) => applyAutoDetection(selectedDate, prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate]);
+
   // ------------- File selection -------------
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
+
     if (!files || files.length === 0) {
       setFileConfigs([]);
       setPreviewTable([]);
@@ -215,22 +245,21 @@ export default function HomePage() {
       return;
     }
 
-    const list: FileConfig[] = [];
     const now = Date.now();
+    const list: FileConfig[] = [];
 
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       list.push({
         id: `${f.name}-${i}-${now}`,
         file: f,
+
         gameId: "",
-        blocks: [
-          {
-            id: `block-1-${i}-${now}`,
-            from: "",
-            to: "",
-          },
-        ],
+        autoDetectedGameId: null,
+        autoDetectNote: null,
+        autoDetectStatus: "not_found",
+
+        blocks: [{ id: `block-1-${i}-${now}`, from: "", to: "" }],
         blockDraftFrom: "",
         blockDraftTo: "",
         enableGapFill: true,
@@ -238,7 +267,7 @@ export default function HomePage() {
       });
     }
 
-    setFileConfigs(list);
+    setFileConfigs(applyAutoDetection(selectedDate, list));
     setPreviewTable([]);
     setPreviewLabel("");
     setStructured([]);
@@ -289,18 +318,24 @@ export default function HomePage() {
       return;
     }
 
-    if (!cfg.gameId) {
-      setError(`Please select a game for file: ${cfg.file.name} before saving.`);
+    // BLOCK if auto detection is not OK
+    if (cfg.autoDetectStatus !== "ok") {
+      setError(`Cannot save "${cfg.file.name}": ${cfg.autoDetectNote || "Auto-detection failed."}`);
       return;
     }
 
-    const game = games.find((g) => g.id === cfg.gameId);
-    const gameName = game?.name ?? "";
+    if (!cfg.gameId) {
+      setError(`Game not set for file: ${cfg.file.name}`);
+      return;
+    }
 
     try {
       setError(null);
       setSavingFileId(cfg.id);
-      await saveUploadedFile(cfg.file, cfg.gameId, gameName, selectedDate);
+
+      // Since you want hard-coded games: gameId == official code; gameName == official code
+      await saveUploadedFile(cfg.file, cfg.gameId, cfg.gameId, selectedDate);
+
       await loadUploads(selectedDate);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error saving file to Firebase.";
@@ -337,15 +372,14 @@ export default function HomePage() {
       return;
     }
 
-    if (games.length === 0) {
-      setError("No games loaded. Please define games in the Game Master section first.");
-      return;
-    }
-
-    // Ensure each file has a selected game
+    // Strict validation (NO manual override allowed)
     for (const cfg of fileConfigs) {
+      if (cfg.autoDetectStatus !== "ok") {
+        setError(`Fix file "${cfg.file.name}": ${cfg.autoDetectNote || "Auto-detection failed."}`);
+        return;
+      }
       if (!cfg.gameId) {
-        setError(`Please select a game for file: ${cfg.file.name}`);
+        setError(`Game not set for file: ${cfg.file.name}`);
         return;
       }
       if (cfg.validationWarning) {
@@ -359,12 +393,11 @@ export default function HomePage() {
     try {
       const allStructured: StructuredRow[] = [];
 
-      // Process each file sequentially
       for (const cfg of fileConfigs) {
         const file = cfg.file;
 
-        const game = games.find((g) => g.id === cfg.gameId);
-        const gameNameOverride = game?.name ?? "";
+        // Hard-coded: use official code as game name
+        const gameNameOverride = cfg.gameId;
 
         const arrayBuffer = await file.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, { type: "array" });
@@ -384,7 +417,6 @@ export default function HomePage() {
           return newRow;
         });
 
-        // Availability segments (blocks) for THIS file
         const availabilitySegments = buildAvailabilitySegments(cfg.blocks);
 
         const structuredRowsForFile = await buildStructuredRows(
@@ -416,8 +448,8 @@ export default function HomePage() {
 
       setFileName("AllGames_structured.xlsx");
     } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message || "Error while processing the files.");
-      else setError(String(err) || "Error while processing the files.");
+      const msg = err instanceof Error ? err.message : "Error while processing the files.";
+      setError(msg);
     } finally {
       setIsLoading(false);
     }
@@ -438,7 +470,6 @@ export default function HomePage() {
 
   const totalQty = structured.reduce((sum, r) => sum + (r.Qty || 0), 0);
 
-  // ------------- UI -------------
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-900">
       <div className="w-full max-w-6xl p-6 rounded-lg bg-white shadow border border-gray-300 space-y-6">
@@ -533,28 +564,11 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* Game master (CRUD) */}
-        <section className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-3">
-          <h2 className="text-sm font-medium text-gray-800">Game Master (define official game names)</h2>
-          {gamesLoading && <p className="text-xs text-gray-600">Loading games...</p>}
-          {gamesError && <p className="text-xs text-red-600">{gamesError}</p>}
-          {!gamesLoading && !gamesError && <GameAdmin games={games} onRefresh={loadGames} />}
-
-          {games.length === 0 && !gamesLoading && !gamesError && (
-            <p className="text-[11px] text-amber-700">
-              No games found in Firestore (collection{" "}
-              <span className="font-mono">&quot;games&quot;</span>). Use the Game Master section to add your first
-              game.
-            </p>
-          )}
-        </section>
-
         {/* Dealer Configuration */}
         <section className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-3">
           <h2 className="text-sm font-medium text-gray-800">Dealer Mapping Configuration</h2>
           <p className="text-[11px] text-gray-600">
-            Configure how ERP dealer codes are normalized. The master dealer receives credit, alias dealers are
-            mapped to it.
+            Configure how ERP dealer codes are normalized. The master dealer receives credit, alias dealers are mapped to it.
           </p>
           <MasterDealerEditor />
           <DealerAliasEditor />
@@ -577,16 +591,18 @@ export default function HomePage() {
                 className="w-full text-sm"
               />
               <p className="mt-1 text-[11px] text-gray-500">
-                Select multiple files (each file = one game). Every file gets its own stock block config and gap-fill
-                behaviour.
+                Select multiple files (each file = one game). Game will auto-detect from file name and selected business date.
               </p>
             </div>
 
-            {/* Per-file configuration blocks */}
             {fileConfigs.length > 0 && (
               <div className="space-y-3">
                 {fileConfigs.map((cfg, index) => {
-                  const canSave = !!selectedDate && !!cfg.gameId && !savingFileId;
+                  const canSave =
+                    !!selectedDate &&
+                    cfg.autoDetectStatus === "ok" &&
+                    !!cfg.gameId &&
+                    savingFileId !== cfg.id;
 
                   return (
                     <div key={cfg.id} className="border border-gray-300 rounded-lg p-3 bg-white space-y-2">
@@ -609,7 +625,7 @@ export default function HomePage() {
                           <button
                             type="button"
                             onClick={() => void handleSaveFile(cfg.id)}
-                            disabled={!canSave || savingFileId === cfg.id}
+                            disabled={!canSave}
                             className="px-2 py-0.5 rounded border border-blue-500 bg-blue-50 text-blue-700 disabled:opacity-60"
                           >
                             {savingFileId === cfg.id ? "Saving…" : "Save to Firebase"}
@@ -617,26 +633,31 @@ export default function HomePage() {
                         </div>
                       </div>
 
-                      {/* Game select */}
+                      {/* Game select (DISABLED: no manual selection) */}
                       <div>
-                        <label className="block text-xs mb-1 text-gray-700">Game for this file</label>
+                        <label className="block text-xs mb-1 text-gray-700">Game for this file (auto)</label>
                         <select
                           value={cfg.gameId}
-                          onChange={(e) =>
-                            updateFileConfig(cfg.id, (old) => ({
-                              ...old,
-                              gameId: e.target.value,
-                            }))
-                          }
-                          className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
+                          disabled
+                          className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-gray-100 cursor-not-allowed"
                         >
-                          <option value="">-- Select game --</option>
-                          {games.map((g) => (
+                          <option value="">-- Auto selected --</option>
+                            {OFFICIAL_GAMES.map((g: typeof OFFICIAL_GAMES[0]) => (
                             <option key={g.id} value={g.id}>
-                              {g.name} {g.board ? `(${g.board})` : ""}
+                              {g.name}
                             </option>
-                          ))}
+                            ))}
                         </select>
+
+                        {cfg.autoDetectNote && (
+                          <p
+                            className={`mt-1 text-[11px] ${
+                              cfg.autoDetectStatus === "ok" ? "text-gray-600" : "text-red-600"
+                            }`}
+                          >
+                            {cfg.autoDetectNote}
+                          </p>
+                        )}
                       </div>
 
                       {/* Gap fill toggle */}
@@ -654,8 +675,7 @@ export default function HomePage() {
                           className="h-3 w-3"
                         />
                         <label htmlFor={`gap-${cfg.id}`} className="text-[11px] text-gray-800">
-                          Enable master gap filling inside available blocks (rows with &quot;#&quot; will create MASTER
-                          ranges).
+                          Enable master gap filling inside available blocks (rows with &quot;#&quot; will create MASTER ranges).
                         </label>
                       </div>
 
@@ -758,6 +778,7 @@ export default function HomePage() {
                                 const from = cfg.blockDraftFrom.trim();
                                 const to = cfg.blockDraftTo.trim();
                                 if (!from || !to) return;
+
                                 const newId = `block-${Date.now()}-${Math.random()}`;
 
                                 updateFileConfig(cfg.id, (old) => ({
@@ -778,6 +799,7 @@ export default function HomePage() {
                               const from = cfg.blockDraftFrom.trim();
                               const to = cfg.blockDraftTo.trim();
                               if (!from || !to) return;
+
                               const newId = `block-${Date.now()}-${Math.random()}`;
 
                               updateFileConfig(cfg.id, (old) => ({
@@ -832,10 +854,7 @@ export default function HomePage() {
                     {previewTable.map((row, rIdx) => (
                       <tr key={rIdx} className={rIdx % 2 === 0 ? "bg-white" : "bg-gray-100"}>
                         {row.map((cell, cIdx) => (
-                          <td
-                            key={cIdx}
-                            className="px-3 py-1.5 border border-gray-200 whitespace-nowrap"
-                          >
+                          <td key={cIdx} className="px-3 py-1.5 border border-gray-200 whitespace-nowrap">
                             {renderCell(cell)}
                           </td>
                         ))}
@@ -860,6 +879,7 @@ export default function HomePage() {
               </div>
 
               <button
+                type="button"
                 onClick={handleDownload}
                 disabled={!downloadBlob}
                 className="px-3 py-1.5 rounded bg-indigo-600 text-white text-xs font-medium disabled:opacity-60"
