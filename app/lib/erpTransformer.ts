@@ -198,7 +198,8 @@ export async function buildStructuredRows(
   data: Cell[][],
   breakingSegments: BreakingSegment[] = [],
   gameNameOverride?: string,
-  gapFillEnabled: boolean = true
+  gapFillEnabled: boolean = true,
+  drawDateOverride?: string | null
 ): Promise<StructuredRow[]> {
 
   await loadDealerConfig();
@@ -231,6 +232,10 @@ export async function buildStructuredRows(
       }
     }
   }
+  const finalDrawDate =
+  (drawDateOverride && drawDateOverride.trim()) ||
+  (drawDate && drawDate.trim()) ||
+  "";
 
   const dealerRows: { rowIndex: number; dealerCode: string; toBarcode: number }[] = [];
   const out: InternalRow[] = [];
@@ -248,14 +253,14 @@ export async function buildStructuredRows(
     dealerRows.push({ rowIndex: i, dealerCode: dealer, toBarcode: to });
 
     const split = splitBySegments(
-      dealer,
-      from,
-      to,
-      gameName,
-      drawDate,
-      i,
-      breakingSegments
-    );
+  dealer,
+  from,
+  to,
+  gameName,
+  finalDrawDate,
+  i,
+  breakingSegments
+);
 
     if (Array.isArray(split)) out.push(...split);
   }
@@ -291,15 +296,15 @@ export async function buildStructuredRows(
         `[ERP] GAP detected → MASTER ${masterDealer} : ${gapFrom} → ${gapTo} (qty=${gapQty})`
       );
 
-      const split = splitBySegments(
-        masterDealer,
-        gapFrom,
-        gapTo,
-        gameName,
-        drawDate,
-        i - 0.1,
-        breakingSegments
-      );
+     const split = splitBySegments(
+  masterDealer,
+  gapFrom,
+  gapTo,
+  gameName,
+  finalDrawDate,
+  i - 0.1,
+  breakingSegments
+);
 
       if (Array.isArray(split)) out.push(...split);
     }

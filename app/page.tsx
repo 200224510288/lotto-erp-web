@@ -41,6 +41,9 @@ type FileConfig = {
   // Selected game (OFFICIAL CODE, e.g., "SFT")
   gameId: string;
 
+  // NEW: Draw date override (because new ERP report has no draw date)
+  drawDate: string; // YYYY-MM-DD
+
   // Auto-detect safety
   autoDetectedGameId: string | null;
   autoDetectNote: string | null;
@@ -250,21 +253,24 @@ export default function HomePage() {
 
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-      list.push({
-        id: `${f.name}-${i}-${now}`,
-        file: f,
+    list.push({
+  id: `${f.name}-${i}-${now}`,
+  file: f,
 
-        gameId: "",
-        autoDetectedGameId: null,
-        autoDetectNote: null,
-        autoDetectStatus: "not_found",
+  gameId: "",
+  drawDate: selectedDate, // ✅ NEW (default to selected business date)
 
-        blocks: [{ id: `block-1-${i}-${now}`, from: "", to: "" }],
-        blockDraftFrom: "",
-        blockDraftTo: "",
-        enableGapFill: true,
-        validationWarning: null,
-      });
+  autoDetectedGameId: null,
+  autoDetectNote: null,
+  autoDetectStatus: "not_found",
+
+  blocks: [{ id: `block-1-${i}-${now}`, from: "", to: "" }],
+  blockDraftFrom: "",
+  blockDraftTo: "",
+  enableGapFill: true,
+  validationWarning: null,
+});
+
     }
 
     setFileConfigs(applyAutoDetection(selectedDate, list));
@@ -382,6 +388,11 @@ export default function HomePage() {
         setError(`Game not set for file: ${cfg.file.name}`);
         return;
       }
+      if (!cfg.drawDate) {
+  setError(`Draw date not set for file: ${cfg.file.name}`);
+  return;
+}
+
       if (cfg.validationWarning) {
         setError(`Please fix availability blocks for file: ${cfg.file.name} → ${cfg.validationWarning}`);
         return;
@@ -420,11 +431,13 @@ export default function HomePage() {
         const availabilitySegments = buildAvailabilitySegments(cfg.blocks);
 
         const structuredRowsForFile = await buildStructuredRows(
-          normalized,
-          availabilitySegments,
-          gameNameOverride,
-          cfg.enableGapFill
-        );
+  normalized,
+  availabilitySegments,
+  gameNameOverride,
+  cfg.enableGapFill,
+  cfg.drawDate // ✅ NEW
+);
+
 
         allStructured.push(...structuredRowsForFile);
       }
@@ -635,8 +648,25 @@ export default function HomePage() {
 
                       {/* Game select (DISABLED: no manual selection) */}
                       <div>
-                        <label className="block text-xs mb-1 text-gray-700">Game for this file (auto)</label>
-                        <select
+<div>
+  <label className="block text-xs mb-1 text-gray-700">
+    Draw date for this file
+  </label>
+  <input
+    type="date"
+    value={cfg.drawDate}
+    onChange={(e) =>
+      updateFileConfig(cfg.id, (old) => ({
+        ...old,
+        drawDate: e.target.value,
+      }))
+    }
+    className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
+  />
+  <p className="text-[11px] text-gray-500 mt-1">
+    New ERP report has no DRAW DATE field. This selected date will be used in the output.
+  </p>
+</div>                        <select
                           value={cfg.gameId}
                           disabled
                           className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-gray-100 cursor-not-allowed"
