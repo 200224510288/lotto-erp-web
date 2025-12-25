@@ -38,7 +38,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SBT: "SBT",
     KTB: "KTH",
     SPT: "STH",
-    Vt: "DTH",
+    VT: "DTH",
     ST: "JTH",
   },
   Friday: {
