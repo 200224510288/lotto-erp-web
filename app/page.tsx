@@ -71,35 +71,19 @@ function todayKey(): string {
 
 // Build a merged, sorted list of availability segments from the UI blocks
 function buildAvailabilitySegments(blocks: AvailabilityBlock[]): BreakingSegment[] {
-  const raw: BreakingSegment[] = [];
+  const segs: BreakingSegment[] = [];
 
   for (const b of blocks) {
     const fromNum = toNumber(b.from as Cell);
     const toNum = toNumber(b.to as Cell);
     if (fromNum !== null && toNum !== null && fromNum <= toNum) {
-      raw.push({ start: fromNum, end: toNum });
+      segs.push({ start: fromNum, end: toNum });
     }
   }
 
-  if (raw.length === 0) return [];
-
-  raw.sort((a, b) => a.start - b.start);
-
-  const merged: BreakingSegment[] = [];
-  for (const seg of raw) {
-    if (merged.length === 0) {
-      merged.push({ ...seg });
-      continue;
-    }
-    const last = merged[merged.length - 1];
-    if (seg.start <= last.end + 1) {
-      last.end = Math.max(last.end, seg.end);
-    } else {
-      merged.push({ ...seg });
-    }
-  }
-
-  return merged;
+  // Keep each block separate (important for 3 / 7 / 3 etc.)
+  segs.sort((a, b) => a.start - b.start);
+  return segs;
 }
 
 // Simple validation: check blocks that have partial data or FROM>TO
