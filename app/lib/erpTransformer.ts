@@ -1,8 +1,5 @@
 // lib/erpTransformer.ts
-import {
-  getDealerAliases,
-  getMasterDealerCode,
-} from "./dealerConfig";
+import { getDealerAliases, getMasterDealerCode } from "./dealerConfig";
 
 // -------------------------------------------------------------
 // Cached dealer config
@@ -27,10 +24,22 @@ export async function normalizeDealerCodeDynamic(input: string): Promise<string>
 // -------------------------------------------------------------
 export type Cell = string | number | null;
 
+// INTERNAL ROW (used for validations & correctness)
+export type StructuredRowInternal = {
+  DealerCode: string;
+  Game: string;
+  Draw: string;
+  From: number;
+  To: number; // internal only (required for overlaps, split correctness)
+  Qty: number;
+};
+
+// VIEW ROW (what you show/export) — NO "To"
 export type StructuredRow = {
   DealerCode: string;
   Game: string;
   Draw: string;
+  From: number;
   Qty: number;
 };
 
@@ -53,6 +62,25 @@ export function toNumber(value: Cell): number | null {
 export function renderCell(v: Cell): string {
   if (v == null) return "";
   return String(v).replace(/[^\d]/g, "");
+}
+
+// -------------------------------------------------------------
+// Trim helper (remove first N digits)
+// -------------------------------------------------------------
+export function trimBarcodeNumber(n: number, trimDigits: number): number | null {
+  const t = Math.max(0, Math.trunc(trimDigits || 0));
+  const s = String(Math.trunc(n));
+
+  if (t === 0) return Math.trunc(n);
+  if (s.length <= t) return null;
+
+  const cut = s.slice(t); // remove first N digits
+  const cleaned = cut.replace(/^0+/, ""); // drop leading zeros
+
+  if (!cleaned) return 0;
+  const out = Number(cleaned);
+
+  return Number.isNaN(out) ? null : Math.trunc(out);
 }
 
 // -------------------------------------------------------------
@@ -81,12 +109,17 @@ export async function detectDealerCode(row: Cell[]): Promise<string | null> {
   return null;
 }
 
-export function detectBarcodes(row: Cell[]) {
+export function detectBarcodes(row: Cell[], trimDigits: number = 0) {
   const nums: number[] = [];
 
   for (const c of row) {
     const n = toNumber(c);
-    if (n != null && String(n).length >= 7) nums.push(n);
+
+    // only barcode-like values
+    if (n != null && String(n).length >= 7) {
+      const trimmed = trimBarcodeNumber(n, trimDigits);
+      if (trimmed != null) nums.push(trimmed);
+    }
   }
 
   nums.sort((a, b) => a - b);
@@ -150,7 +183,6 @@ function splitBySegments(
   baseIndex: number,
   segments: BreakingSegment[]
 ): InternalRow[] {
-
   segments = Array.isArray(segments) ? segments : [];
 
   // No segments → keep full range as-is
@@ -193,15 +225,17 @@ function splitBySegments(
 // -------------------------------------------------------------
 // MAIN builder (with optional MASTER gap handling)
 // breakingSegments here = "available stock blocks" for this file
+// trimDigits applies to ERP barcode detection + gaps
+// (segments should already be trimmed by UI before passing in)
 // -------------------------------------------------------------
 export async function buildStructuredRows(
   data: Cell[][],
   breakingSegments: BreakingSegment[] = [],
   gameNameOverride?: string,
   gapFillEnabled: boolean = true,
-  drawDateOverride?: string | null
-): Promise<StructuredRow[]> {
-
+  drawDateOverride?: string | null,
+  trimDigits: number = 0
+): Promise<StructuredRowInternal[]> {
   await loadDealerConfig();
   breakingSegments = Array.isArray(breakingSegments) ? breakingSegments : [];
 
@@ -232,10 +266,11 @@ export async function buildStructuredRows(
       }
     }
   }
+
   const finalDrawDate =
-  (drawDateOverride && drawDateOverride.trim()) ||
-  (drawDate && drawDate.trim()) ||
-  "";
+    (drawDateOverride && drawDateOverride.trim()) ||
+    (drawDate && drawDate.trim()) ||
+    "";
 
   const dealerRows: { rowIndex: number; dealerCode: string; toBarcode: number }[] = [];
   const out: InternalRow[] = [];
@@ -247,20 +282,20 @@ export async function buildStructuredRows(
     const dealer = await detectDealerCode(row);
     if (!dealer) continue;
 
-    const { from, to } = detectBarcodes(row);
+    const { from, to } = detectBarcodes(row, trimDigits);
     if (from == null || to == null) continue;
 
     dealerRows.push({ rowIndex: i, dealerCode: dealer, toBarcode: to });
 
     const split = splitBySegments(
-  dealer,
-  from,
-  to,
-  gameName,
-  finalDrawDate,
-  i,
-  breakingSegments
-);
+      dealer,
+      from,
+      to,
+      gameName,
+      finalDrawDate,
+      i,
+      breakingSegments
+    );
 
     if (Array.isArray(split)) out.push(...split);
   }
@@ -275,7 +310,7 @@ export async function buildStructuredRows(
       // Only rows that contain "#"
       if (!hasHashMarker(row)) continue;
 
-      const { from: nextStart } = detectBarcodes(row);
+      const { from: nextStart } = detectBarcodes(row, trimDigits);
       if (nextStart == null) continue;
 
       // Find previous dealer line above this gap marker
@@ -291,20 +326,19 @@ export async function buildStructuredRows(
 
       if (gapQty <= 0) continue;
 
-      // Debug if needed
       console.log(
         `[ERP] GAP detected → MASTER ${masterDealer} : ${gapFrom} → ${gapTo} (qty=${gapQty})`
       );
 
-     const split = splitBySegments(
-  masterDealer,
-  gapFrom,
-  gapTo,
-  gameName,
-  finalDrawDate,
-  i - 0.1,
-  breakingSegments
-);
+      const split = splitBySegments(
+        masterDealer,
+        gapFrom,
+        gapTo,
+        gameName,
+        finalDrawDate,
+        i - 0.1,
+        breakingSegments
+      );
 
       if (Array.isArray(split)) out.push(...split);
     }
@@ -317,6 +351,8 @@ export async function buildStructuredRows(
     DealerCode: r.DealerCode,
     Game: r.Game,
     Draw: r.Draw,
+    From: r.From,
+    To: r.To,
     Qty: r.Qty,
   }));
 }

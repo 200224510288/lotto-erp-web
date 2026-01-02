@@ -7,10 +7,15 @@ import * as XLSX from "xlsx";
 
 import {
   buildStructuredRows,
-  Cell,
-  StructuredRow,
   renderCell,
+  trimBarcodeNumber,
   toNumber,
+} from "./lib/erpTransformer";
+
+import type {
+  StructuredRow,
+  StructuredRowInternal,
+  Cell,
   BreakingSegment,
 } from "./lib/erpTransformer";
 
@@ -41,8 +46,11 @@ type FileConfig = {
   // Selected game (OFFICIAL CODE, e.g., "SFT")
   gameId: string;
 
-  // NEW: Draw date override (because new ERP report has no draw date)
+  // Draw date override
   drawDate: string; // YYYY-MM-DD
+
+  // Trim first N digits from barcodes (ERP + blocks)
+  trimDigits: number;
 
   // Auto-detect safety
   autoDetectedGameId: string | null;
@@ -60,6 +68,12 @@ type FileConfig = {
   validationWarning: string | null;
 };
 
+type UiWarning = {
+  fileId: string;
+  fileName: string;
+  messages: string[];
+};
+
 // Utility: today as YYYY-MM-DD (local)
 function todayKey(): string {
   const d = new Date();
@@ -69,21 +83,62 @@ function todayKey(): string {
   return `${y}-${m}-${day}`;
 }
 
-// Build a merged, sorted list of availability segments from the UI blocks
-function buildAvailabilitySegments(blocks: AvailabilityBlock[]): BreakingSegment[] {
+// Build a merged, sorted list of availability segments from the UI blocks (trim-aware)
+function buildAvailabilitySegments(
+  blocks: AvailabilityBlock[],
+  trimDigits: number
+): BreakingSegment[] {
   const segs: BreakingSegment[] = [];
 
   for (const b of blocks) {
-    const fromNum = toNumber(b.from as Cell);
-    const toNum = toNumber(b.to as Cell);
-    if (fromNum !== null && toNum !== null && fromNum <= toNum) {
-      segs.push({ start: fromNum, end: toNum });
+    const fromNumRaw = toNumber(b.from as Cell);
+    const toNumRaw = toNumber(b.to as Cell);
+
+    if (fromNumRaw !== null && toNumRaw !== null) {
+      const fromNum = trimBarcodeNumber(fromNumRaw, trimDigits);
+      const toNum = trimBarcodeNumber(toNumRaw, trimDigits);
+
+      if (fromNum !== null && toNum !== null && fromNum <= toNum) {
+        segs.push({ start: fromNum, end: toNum });
+      }
     }
   }
 
-  // Keep each block separate (important for 3 / 7 / 3 etc.)
   segs.sort((a, b) => a.start - b.start);
   return segs;
+}
+
+function formatRange(a: number, b: number): string {
+  return `${a}–${b}`;
+}
+
+// Validation 1: Overlap between different dealers (needs INTERNAL rows with To)
+function detectDealerOverlaps(rows: StructuredRowInternal[]): string[] {
+  const sorted = [...rows].sort((a, b) => a.From - b.From || a.To - b.To);
+
+  const msgs: string[] = [];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1];
+    const cur = sorted[i];
+
+    if (cur.From <= prev.To && cur.DealerCode !== prev.DealerCode) {
+      const overlapFrom = Math.max(cur.From, prev.From);
+      const overlapTo = Math.min(cur.To, prev.To);
+
+      msgs.push(
+        `Range conflict: Dealer ${prev.DealerCode} (${formatRange(
+          prev.From,
+          prev.To
+        )}) overlaps Dealer ${cur.DealerCode} (${formatRange(
+          cur.From,
+          cur.To
+        )}) at ${formatRange(overlapFrom, overlapTo)}.`
+      );
+    }
+  }
+
+  return msgs;
 }
 
 // Simple validation: check blocks that have partial data or FROM>TO
@@ -114,6 +169,7 @@ function recalcValidationBlocks(blocks: AvailabilityBlock[]): string | null {
 export default function HomePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<UiWarning[]>([]);
 
   // Business date / upload date selection
   const [selectedDate, setSelectedDate] = useState<string>(todayKey());
@@ -122,7 +178,7 @@ export default function HomePage() {
   const [previewTable, setPreviewTable] = useState<Cell[][]>([]);
   const [previewLabel, setPreviewLabel] = useState<string>("");
 
-  // Combined structured rows for all files
+  // Combined VIEW rows for all files (NO To)
   const [structured, setStructured] = useState<StructuredRow[]>([]);
   const [downloadBlob, setDownloadBlob] = useState<Blob | null>(null);
   const [fileName, setFileName] = useState<string>("Structured.xlsx");
@@ -140,7 +196,10 @@ export default function HomePage() {
   const [deletingUploadId, setDeletingUploadId] = useState<string | null>(null);
 
   // ------------- FileConfig update helper -------------
-  function updateFileConfig(cfgId: string, updater: (oldCfg: FileConfig) => FileConfig) {
+  function updateFileConfig(
+    cfgId: string,
+    updater: (oldCfg: FileConfig) => FileConfig
+  ) {
     setFileConfigs((prev) =>
       prev.map((cfg) => {
         if (cfg.id !== cfgId) return cfg;
@@ -186,7 +245,6 @@ export default function HomePage() {
       if (s.status === "mismatch_day") {
         return {
           ...cfg,
-          // Still show which game it really is, but block processing
           gameId: s.official,
           autoDetectedGameId: s.official,
           autoDetectNote: s.note,
@@ -194,7 +252,7 @@ export default function HomePage() {
         };
       }
 
-      // ambiguous / not_found → block (no game)
+      // ambiguous / not_found → block
       return {
         ...cfg,
         gameId: "",
@@ -237,24 +295,26 @@ export default function HomePage() {
 
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-    list.push({
-  id: `${f.name}-${i}-${now}`,
-  file: f,
 
-  gameId: "",
-  drawDate: selectedDate, // ✅ NEW (default to selected business date)
+      list.push({
+        id: `${f.name}-${i}-${now}`,
+        file: f,
 
-  autoDetectedGameId: null,
-  autoDetectNote: null,
-  autoDetectStatus: "not_found",
+        gameId: "",
+        drawDate: selectedDate,
 
-  blocks: [{ id: `block-1-${i}-${now}`, from: "", to: "" }],
-  blockDraftFrom: "",
-  blockDraftTo: "",
-  enableGapFill: true,
-  validationWarning: null,
-});
+        trimDigits: 0, // default
 
+        autoDetectedGameId: null,
+        autoDetectNote: null,
+        autoDetectStatus: "not_found",
+
+        blocks: [{ id: `block-1-${i}-${now}`, from: "", to: "" }],
+        blockDraftFrom: "",
+        blockDraftTo: "",
+        enableGapFill: true,
+        validationWarning: null,
+      });
     }
 
     setFileConfigs(applyAutoDetection(selectedDate, list));
@@ -281,7 +341,10 @@ export default function HomePage() {
         raw: false,
       }) as Cell[][];
 
-      const maxCols = rawData.reduce((max, row) => (row.length > max ? row.length : max), 0);
+      const maxCols = rawData.reduce(
+        (max, row) => (row.length > max ? row.length : max),
+        0
+      );
 
       const normalized: Cell[][] = rawData.map((row) => {
         const newRow: Cell[] = new Array(maxCols).fill("");
@@ -308,9 +371,10 @@ export default function HomePage() {
       return;
     }
 
-    // BLOCK if auto detection is not OK
     if (cfg.autoDetectStatus !== "ok") {
-      setError(`Cannot save "${cfg.file.name}": ${cfg.autoDetectNote || "Auto-detection failed."}`);
+      setError(
+        `Cannot save "${cfg.file.name}": ${cfg.autoDetectNote || "Auto-detection failed."}`
+      );
       return;
     }
 
@@ -323,7 +387,6 @@ export default function HomePage() {
       setError(null);
       setSavingFileId(cfg.id);
 
-      // Since you want hard-coded games: gameId == official code; gameName == official code
       await saveUploadedFile(cfg.file, cfg.gameId, cfg.gameId, selectedDate);
 
       await loadUploads(selectedDate);
@@ -362,10 +425,11 @@ export default function HomePage() {
       return;
     }
 
-    // Strict validation (NO manual override allowed)
     for (const cfg of fileConfigs) {
       if (cfg.autoDetectStatus !== "ok") {
-        setError(`Fix file "${cfg.file.name}": ${cfg.autoDetectNote || "Auto-detection failed."}`);
+        setError(
+          `Fix file "${cfg.file.name}": ${cfg.autoDetectNote || "Auto-detection failed."}`
+        );
         return;
       }
       if (!cfg.gameId) {
@@ -373,12 +437,13 @@ export default function HomePage() {
         return;
       }
       if (!cfg.drawDate) {
-  setError(`Draw date not set for file: ${cfg.file.name}`);
-  return;
-}
-
+        setError(`Draw date not set for file: ${cfg.file.name}`);
+        return;
+      }
       if (cfg.validationWarning) {
-        setError(`Please fix availability blocks for file: ${cfg.file.name} → ${cfg.validationWarning}`);
+        setError(
+          `Please fix availability blocks for file: ${cfg.file.name} → ${cfg.validationWarning}`
+        );
         return;
       }
     }
@@ -386,12 +451,11 @@ export default function HomePage() {
     setIsLoading(true);
 
     try {
-      const allStructured: StructuredRow[] = [];
+      const allStructuredInternal: StructuredRowInternal[] = [];
+      const allWarnings: UiWarning[] = [];
 
       for (const cfg of fileConfigs) {
         const file = cfg.file;
-
-        // Hard-coded: use official code as game name
         const gameNameOverride = cfg.gameId;
 
         const arrayBuffer = await file.arrayBuffer();
@@ -404,7 +468,10 @@ export default function HomePage() {
           raw: false,
         }) as Cell[][];
 
-        const maxCols = rawData.reduce((max, row) => (row.length > max ? row.length : max), 0);
+        const maxCols = rawData.reduce(
+          (max, row) => (row.length > max ? row.length : max),
+          0
+        );
 
         const normalized: Cell[][] = rawData.map((row) => {
           const newRow: Cell[] = new Array(maxCols).fill("");
@@ -412,26 +479,59 @@ export default function HomePage() {
           return newRow;
         });
 
-        const availabilitySegments = buildAvailabilitySegments(cfg.blocks);
+        // Trim-aware segments from UI blocks
+        const availabilitySegments = buildAvailabilitySegments(cfg.blocks, cfg.trimDigits);
 
+        const msgs: string[] = [];
+
+        // Build internal rows (with To)
         const structuredRowsForFile = await buildStructuredRows(
-  normalized,
-  availabilitySegments,
-  gameNameOverride,
-  cfg.enableGapFill,
-  cfg.drawDate // ✅ NEW
-);
+          normalized,
+          availabilitySegments,
+          gameNameOverride,
+          cfg.enableGapFill,
+          cfg.drawDate,
+          cfg.trimDigits
+        );
 
+        // Only overlap warnings remain
+        msgs.push(...detectDealerOverlaps(structuredRowsForFile));
 
-        allStructured.push(...structuredRowsForFile);
+        if (msgs.length > 0) {
+          allWarnings.push({
+            fileId: cfg.id,
+            fileName: cfg.file.name,
+            messages: msgs,
+          });
+        }
+
+        allStructuredInternal.push(...structuredRowsForFile);
       }
 
-      setStructured(allStructured);
+      // INTERNAL → VIEW rows (no To)
+      const allStructuredView: StructuredRow[] = allStructuredInternal.map((r) => ({
+        DealerCode: r.DealerCode,
+        Game: r.Game,
+        Draw: r.Draw,
+        From: r.From,
+        Qty: r.Qty,
+      }));
 
-      if (allStructured.length === 0) {
+      setStructured(allStructuredView);
+      setWarnings(allWarnings);
+
+      if (allWarnings.length > 0) {
+        const text = allWarnings
+          .map((w) => `File: ${w.fileName}\n- ${w.messages.join("\n- ")}`)
+          .join("\n\n");
+
+        alert(`Warnings detected:\n\n${text}`);
+      }
+
+      if (allStructuredView.length === 0) {
         setError("No dealer rows / gaps detected in the uploaded files.");
       } else {
-        const ws = XLSX.utils.json_to_sheet(allStructured);
+        const ws = XLSX.utils.json_to_sheet(allStructuredView);
         const newWb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(newWb, ws, "Structured");
 
@@ -477,6 +577,24 @@ export default function HomePage() {
           <Link href="/" className="text-xs text-blue-600 hover:underline">
             Home
           </Link>
+
+          {warnings.length > 0 && (
+            <div className="border border-amber-300 bg-amber-50 rounded p-3 text-[12px] text-amber-900">
+              <div className="font-medium mb-1">Warnings</div>
+              <div className="space-y-2">
+                {warnings.map((w) => (
+                  <div key={w.fileId}>
+                    <div className="font-medium">{w.fileName}</div>
+                    <ul className="list-disc pl-5">
+                      {w.messages.map((m, i) => (
+                        <li key={i}>{m}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Business Date + Upload History */}
@@ -630,37 +748,66 @@ export default function HomePage() {
                         </div>
                       </div>
 
+                      {/* Draw date + Trim */}
+                      <div className="space-y-2">
+                        <div>
+                          <label className="block text-xs mb-1 text-gray-700">
+                            Draw date for this file
+                          </label>
+                          <input
+                            type="date"
+                            value={cfg.drawDate}
+                            onChange={(e) =>
+                              updateFileConfig(cfg.id, (old) => ({
+                                ...old,
+                                drawDate: e.target.value,
+                              }))
+                            }
+                            className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
+                          />
+                          <p className="text-[11px] text-gray-500 mt-1">
+                            New ERP report has no DRAW DATE field. This selected date will be used in the output.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs mb-1 text-gray-700">
+                            Trim prefix digits (ERP + Available blocks)
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={10}
+                            value={cfg.trimDigits}
+                            onChange={(e) => {
+                              const raw = Number(e.target.value || 0);
+                              const v = Math.max(0, Math.min(10, Number.isFinite(raw) ? raw : 0));
+                              updateFileConfig(cfg.id, (old) => ({
+                                ...old,
+                                trimDigits: Math.trunc(v),
+                              }));
+                            }}
+                            className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
+                          />
+                          <p className="text-[11px] text-gray-500 mt-1">
+                            Example: Trim=2 turns &quot;324040404&quot; → &quot;4040404&quot;.
+                          </p>
+                        </div>
+                      </div>
+
                       {/* Game select (DISABLED: no manual selection) */}
                       <div>
-<div>
-  <label className="block text-xs mb-1 text-gray-700">
-    Draw date for this file
-  </label>
-  <input
-    type="date"
-    value={cfg.drawDate}
-    onChange={(e) =>
-      updateFileConfig(cfg.id, (old) => ({
-        ...old,
-        drawDate: e.target.value,
-      }))
-    }
-    className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
-  />
-  <p className="text-[11px] text-gray-500 mt-1">
-    New ERP report has no DRAW DATE field. This selected date will be used in the output.
-  </p>
-</div>                        <select
+                        <select
                           value={cfg.gameId}
                           disabled
                           className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-gray-100 cursor-not-allowed"
                         >
                           <option value="">-- Auto selected --</option>
-                            {OFFICIAL_GAMES.map((g: typeof OFFICIAL_GAMES[0]) => (
+                          {OFFICIAL_GAMES.map((g: (typeof OFFICIAL_GAMES)[0]) => (
                             <option key={g.id} value={g.id}>
                               {g.name}
                             </option>
-                            ))}
+                          ))}
                         </select>
 
                         {cfg.autoDetectNote && (
@@ -696,9 +843,11 @@ export default function HomePage() {
                       {/* Availability blocks */}
                       <div className="mt-3 space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-medium text-gray-800">Available stock blocks (FROM–TO)</span>
+                          <span className="text-xs font-medium text-gray-800">
+                            Available stock blocks (FROM–TO)
+                          </span>
                           <span className="text-[11px] text-gray-500">
-                            e.g. 831243421–831243720 and 831254256–831254355
+                            Enter original values; Trim applies automatically.
                           </span>
                         </div>
 
@@ -886,7 +1035,9 @@ export default function HomePage() {
           <section className="space-y-2">
             <div className="flex items-center justify-between">
               <div className="text-sm text-gray-800">
-                <span className="font-medium">Combined structured table (DealerCode / Game / Draw / Qty)</span>
+                <span className="font-medium">
+                  Combined structured table (DealerCode / Game / Draw / From / Qty)
+                </span>
                 <span className="ml-2 text-gray-600">
                   ({structured.length} rows, total qty: {totalQty})
                 </span>
