@@ -20,15 +20,14 @@ export type ReturnRow = {
  *  - From + To  (recommended)
  *  - From + Qty (To will be derived)
  *
- * IMPORTANT: Use the SAME 7-digit barcode style (last 7 digits),
- * or pass 9-digit and we will take last 7 automatically.
+ * Barcode can be 7+ digits; we normalize to final 7 digits after trim.
  */
 export type V1ExistingRow = {
   DealerCode: string; // "30539" or "030539" (any; we normalize to 6 digits)
   Game?: string;      // optional: if you want strict match
   Draw?: string;      // optional: if you want strict match
-  From: string;       // 7-digit or 9-digit (we normalize to last 7)
-  To?: string;        // 7-digit or 9-digit (we normalize to last 7)
+  From: string;       // 7+ digits
+  To?: string;        // 7+ digits
   Qty?: number;       // optional if To is provided
 };
 
@@ -39,7 +38,7 @@ export type V1ExistingRow = {
 let cachedMaster: string | null = null;
 let cachedAliases: Record<string, string> | null = null;
 
-async function loadDealerConfig() {
+async function loadDealerConfig(): Promise<void> {
   if (!cachedMaster) cachedMaster = await getMasterDealerCode();
   if (!cachedAliases) cachedAliases = await getDealerAliases();
 }
@@ -58,7 +57,6 @@ export async function normalizeDealerCodeDynamic(input: string): Promise<string>
  * Convert any Excel cell into a DIGITS-ONLY STRING
  * - Handles numbers
  * - Handles scientific notation
- * - Never pads or trims here
  */
 function toDigitsString(value: Cell): string {
   if (value == null) return "";
@@ -91,34 +89,47 @@ function rowContainsTotal(row: Cell[]): boolean {
 }
 
 /* =============================================================
-   BARCODE NORMALIZATION (FLEXIBLE)
+   TRIM + BARCODE NORMALIZATION
    ============================================================= */
 
 /**
- * Always returns 7-digit barcode string.
- *
- * Rule:
- *  - If barcode has >= 7 digits -> take LAST 7 digits
- *  - If barcode has < 7 digits -> prepend defaultPrefix (2 digits), then take last 7
+ * Trim first N digits from a digits-only string.
+ * If trimDigits <= 0 => returns original.
  */
-function normalizeBarcodeTo7(value: Cell, defaultPrefix2: string): string {
-  const digits = toDigitsString(value);
+function trimDigitsFromString(digits: string, trimDigits: number): string {
+  const t = Math.max(0, Math.trunc(trimDigits || 0));
+  if (t <= 0) return digits;
   if (!digits) return "";
-
-  const prefix = (defaultPrefix2 || "").replace(/[^\d]/g, "").slice(0, 2);
-
-  if (digits.length >= 7) {
-    return digits.slice(-7);
-  }
-
-  const combined = `${prefix}${digits}`;
-  return combined.padStart(7, "0").slice(-7);
+  if (digits.length <= t) return "";
+  return digits.slice(t);
 }
 
-function normalizeBarcodeStringTo7(value: string): string {
+/**
+ * Always returns 7-digit barcode string (TEXT).
+ * Steps:
+ * 1) digits-only
+ * 2) trim first N digits
+ * 3) if >=7 => take LAST 7
+ *    else padStart(7,"0")
+ */
+function normalizeBarcodeTo7(value: Cell, trimDigits: number): string {
+  const rawDigits = toDigitsString(value);
+  if (!rawDigits) return "";
+
+  const trimmed = trimDigitsFromString(rawDigits, trimDigits);
+  if (!trimmed) return "";
+
+  return trimmed.length >= 7 ? trimmed.slice(-7) : trimmed.padStart(7, "0");
+}
+
+function normalizeBarcodeStringTo7(value: string, trimDigits: number): string {
   const digits = String(value ?? "").replace(/[^\d]/g, "");
   if (!digits) return "";
-  return digits.length >= 7 ? digits.slice(-7) : digits.padStart(7, "0");
+
+  const trimmed = trimDigitsFromString(digits, trimDigits);
+  if (!trimmed) return "";
+
+  return trimmed.length >= 7 ? trimmed.slice(-7) : trimmed.padStart(7, "0");
 }
 
 /* =============================================================
@@ -171,7 +182,7 @@ async function parseReturnRow(
   row: Cell[],
   gameName: string,
   draw: string,
-  defaultPrefix2: string
+  trimDigits: number
 ): Promise<ReturnRow | null> {
   if (isEmptyRow(row)) return null;
   if (rowContainsTotal(row)) return null;
@@ -182,12 +193,15 @@ async function parseReturnRow(
   const { fromCell, qty } = detectFromAndQty(row);
   if (!fromCell || qty == null) return null;
 
+  const from7 = normalizeBarcodeTo7(fromCell, trimDigits);
+  if (!from7) return null;
+
   return {
     DealerCode: dealer,
     Game: gameName,
     Draw: draw,
     Qty: qty,
-    From: normalizeBarcodeTo7(fromCell, defaultPrefix2),
+    From: from7,
   };
 }
 
@@ -248,7 +262,10 @@ function subtractRanges(base: NumRange, excludes: NumRange[]): NumRange[] {
   return remaining;
 }
 
-function keyFor(row: { DealerCode: string; Game?: string; Draw?: string }, strict: boolean): string {
+function keyFor(
+  row: { DealerCode: string; Game?: string; Draw?: string },
+  strict: boolean
+): string {
   const dealer6 = String(row.DealerCode ?? "").replace(/[^\d]/g, "").padStart(6, "0");
   if (!strict) return dealer6;
   return `${dealer6}__${(row.Game ?? "").trim()}__${(row.Draw ?? "").trim()}`;
@@ -256,13 +273,14 @@ function keyFor(row: { DealerCode: string; Game?: string; Draw?: string }, stric
 
 /**
  * Apply V1 exclusion to parsed ReturnRow[].
- * - Removes rows fully contained in V1
+ * - Removes rows fully covered by V1 ranges
  * - Splits rows on partial overlaps
  */
 function applyV1Exclusion(
   rows: ReturnRow[],
   v1: V1ExistingRow[],
-  strictMatchGameDraw: boolean
+  strictMatchGameDraw: boolean,
+  trimDigits: number
 ): ReturnRow[] {
   if (!v1 || v1.length === 0) return rows;
 
@@ -271,7 +289,8 @@ function applyV1Exclusion(
 
   for (const r of v1) {
     const dealer6 = String(r.DealerCode ?? "").replace(/[^\d]/g, "").padStart(6, "0");
-    const from7 = normalizeBarcodeStringTo7(r.From);
+
+    const from7 = normalizeBarcodeStringTo7(r.From, trimDigits);
     if (!from7) continue;
 
     const fromN = Number(from7);
@@ -280,7 +299,7 @@ function applyV1Exclusion(
     let toN: number | null = null;
 
     if (r.To) {
-      const to7 = normalizeBarcodeStringTo7(r.To);
+      const to7 = normalizeBarcodeStringTo7(r.To, trimDigits);
       const n = Number(to7);
       if (Number.isFinite(n)) toN = n;
     } else if (typeof r.Qty === "number" && r.Qty > 0) {
@@ -315,12 +334,14 @@ function applyV1Exclusion(
     if (!row.From || !row.Qty || row.Qty <= 0) continue;
 
     const fromN = Number(row.From);
+    if (!Number.isFinite(fromN)) continue;
+
     const toN = fromN + (row.Qty - 1);
 
     const base: NumRange = { from: fromN, to: toN };
     const leftovers = subtractRanges(base, excludes);
 
-    // If fully covered -> nothing added (this is what you asked)
+    // Fully covered => nothing added
     for (const seg of leftovers) {
       const qty = seg.to - seg.from + 1;
       if (qty <= 0) continue;
@@ -346,7 +367,7 @@ export async function buildReturnRows(
   data: Cell[][],
   gameName: string,
   draw: string,
-  defaultPrefix2: string,
+  trimDigits: number,
   v1Existing: V1ExistingRow[] = [],
   opts?: { strictMatchGameDraw?: boolean }
 ): Promise<ReturnRow[]> {
@@ -355,13 +376,12 @@ export async function buildReturnRows(
   const parsed: ReturnRow[] = [];
 
   for (const row of data) {
-    const r = await parseReturnRow(row, gameName, draw, defaultPrefix2);
+    const r = await parseReturnRow(row, gameName, draw, trimDigits);
     if (r) parsed.push(r);
   }
 
-  // IMPORTANT: Remove anything that already exists in V1
   const strict = !!opts?.strictMatchGameDraw;
-  const finalRows = applyV1Exclusion(parsed, v1Existing, strict);
+  const finalRows = applyV1Exclusion(parsed, v1Existing, strict, trimDigits);
 
   return finalRows;
 }

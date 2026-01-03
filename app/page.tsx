@@ -574,9 +574,12 @@ export default function HomePage() {
           <h1 className="text-xl font-semibold">
             ERP Summary → Structured Dealer Table (multi-game, per-file ranges)
           </h1>
-          <Link href="/" className="text-xs text-blue-600 hover:underline">
-            Home
-          </Link>
+         <Link
+      href="/returns"
+      className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow"
+    >
+      Go to Returns Page
+    </Link>
 
           {warnings.length > 0 && (
             <div className="border border-amber-300 bg-amber-50 rounded p-3 text-[12px] text-amber-900">

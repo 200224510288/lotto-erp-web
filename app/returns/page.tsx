@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
+
 import {
   buildReturnRows,
   Cell,
@@ -10,17 +11,21 @@ import {
   V1ExistingRow,
   renderCell,
 } from "../lib/returnTransformer";
-import { GameDef, fetchGames } from "../lib/gameService";
-import { GameAdmin } from "../components/GameAdmin";
+
 import MasterDealerEditor from "../components/MasterDealerEditor";
 import DealerAliasEditor from "../components/DealerAliasEditor";
 
 import {
-  UploadedFileRecord,
-  saveUploadedFile,
-  listUploadedFilesByDate,
-  deleteUploadedFile,
-} from "../lib/uploadService";
+  ReturnUploadedFileRecord,
+  saveReturnUploadedFile,
+  listReturnUploadedFilesByDate,
+  deleteReturnUploadedFile,
+} from "../lib/returnUploadService";
+
+
+
+// ✅ auto game select (same as Sales page)
+import { OFFICIAL_GAMES, suggestGameFromFileName } from "../lib/gameAutoSelect";
 
 function todayKey(): string {
   const d = new Date();
@@ -29,14 +34,6 @@ function todayKey(): string {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
-
-type ReturnFileConfig = {
-  id: string;
-  file: File;
-  gameId: string;
-  draw: string; // dd/mm/yyyy
-  drawDate: string; // yyyy-mm-dd
-};
 
 function formatDateToDDMMYYYY(raw: string): string {
   if (!raw) return "";
@@ -64,18 +61,11 @@ async function readFirstSheet(file: File): Promise<Cell[][]> {
 
 /**
  * Parse V1 table into exclusion rows.
- *
  * Expected V1 formats (flexible):
  * - DealerCode | From | To
  * - DealerCode | From | Qty
  * - DealerCode | Game | Draw | From | To
  * - DealerCode | Game | Draw | From | Qty
- *
- * The parser is permissive:
- * - DealerCode is first 5/6 digit found in row
- * - "From" is first >=7 digit found
- * - "To" is second >=7 digit found (if any)
- * - Qty is last small number <=5 digits found (if any)
  */
 function toDigits(value: Cell): string {
   if (value == null) return "";
@@ -126,8 +116,6 @@ function detectQtyInRow(row: Cell[]): number | null {
 }
 
 function detectGameDrawFromRow(row: Cell[]): { game?: string; draw?: string } {
-  // Optional: if V1 file contains Game/Draw as plain text cells
-  // We’ll take first 2-4 letter token as game and first dd/mm/yyyy as draw if found.
   let game: string | undefined;
   let draw: string | undefined;
 
@@ -145,7 +133,6 @@ function parseV1FromSheet(sheet: Cell[][]): V1ExistingRow[] {
   const out: V1ExistingRow[] = [];
 
   for (const row of sheet) {
-    // skip empty-ish rows
     if (row.every((c) => c == null || String(c).trim() === "")) continue;
 
     const dealer = detectDealerCodeInRow(row);
@@ -172,10 +159,46 @@ function parseV1FromSheet(sheet: Cell[][]): V1ExistingRow[] {
   return out;
 }
 
+/* =============================================================
+   PAGE TYPES
+   ============================================================= */
+
+type ReturnFileConfig = {
+  id: string;
+  file: File;
+
+  // Auto-selected OFFICIAL code, e.g. "SFT"
+  gameId: string;
+
+  // Draw derived from top business date (NO per-file picker)
+  draw: string;     // dd/mm/yyyy
+  drawDate: string; // yyyy-mm-dd
+
+  // Trim first N digits before final 7-digit barcode
+  trimDigits: number;
+
+  // Auto-detect diagnostics
+  autoDetectedGameId: string | null;
+  autoDetectNote: string | null;
+  autoDetectStatus: "ok" | "mismatch_day" | "ambiguous" | "not_found";
+
+  // ✅ per-file optional V1 selection
+  v1Id: string | null;
+  strictMatchGameDraw: boolean;
+};
+
+type V1FileBundle = {
+  id: string;
+  fileName: string;
+  rows: V1ExistingRow[];
+  error: string | null;
+};
+
 export default function ReturnsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ✅ Top business date drives: uploads list, draw date, and game-day auto detect
   const [businessDate, setBusinessDate] = useState<string>(todayKey());
 
   const [previewTable, setPreviewTable] = useState<Cell[][]>([]);
@@ -185,40 +208,22 @@ export default function ReturnsPage() {
   const [downloadBlob, setDownloadBlob] = useState<Blob | null>(null);
   const [fileName, setFileName] = useState<string>("Agent_Returns_structured.xlsx");
 
-  const [games, setGames] = useState<GameDef[]>([]);
-  const [gamesLoading, setGamesLoading] = useState(false);
-  const [gamesError, setGamesError] = useState<string | null>(null);
-
-  // MULTI FILES (like sales)
+  // Return files
   const [fileConfigs, setFileConfigs] = useState<ReturnFileConfig[]>([]);
 
-  // User-defined default 2-digit prefix (flexible)
-  const [defaultPrefix2, setDefaultPrefix2] = useState<string>("09");
-
-  const [uploads, setUploads] = useState<UploadedFileRecord[]>([]);
+  // Upload history
+const [uploads, setUploads] = useState<ReturnUploadedFileRecord[]>([]);
   const [uploadsLoading, setUploadsLoading] = useState(false);
   const [uploadsError, setUploadsError] = useState<string | null>(null);
   const [savingFileId, setSavingFileId] = useState<string | null>(null);
   const [deletingUploadId, setDeletingUploadId] = useState<string | null>(null);
 
-  // V1 exclusion
-  const [v1File, setV1File] = useState<File | null>(null);
-  const [v1Existing, setV1Existing] = useState<V1ExistingRow[]>([]);
-  const [v1Error, setV1Error] = useState<string | null>(null);
-  const [strictMatchGameDraw, setStrictMatchGameDraw] = useState<boolean>(false);
+  // ✅ Multiple V1 files (library), and each return file chooses one (or none)
+  const [v1Bundles, setV1Bundles] = useState<V1FileBundle[]>([]);
+  const [v1LibraryError, setV1LibraryError] = useState<string | null>(null);
 
-  async function loadGames() {
-    setGamesError(null);
-    setGamesLoading(true);
-    try {
-      const list = await fetchGames();
-      setGames(list);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error loading games.";
-      setGamesError(msg);
-    } finally {
-      setGamesLoading(false);
-    }
+  function updateFileConfig(id: string, updater: (old: ReturnFileConfig) => ReturnFileConfig) {
+    setFileConfigs((prev) => prev.map((c) => (c.id === id ? updater(c) : c)));
   }
 
   async function loadUploads(dateKey: string) {
@@ -226,7 +231,7 @@ export default function ReturnsPage() {
     setUploadsError(null);
     setUploadsLoading(true);
     try {
-      const list = await listUploadedFilesByDate(dateKey);
+const list = await listReturnUploadedFilesByDate(dateKey);
       setUploads(list);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error loading uploaded files.";
@@ -238,17 +243,65 @@ export default function ReturnsPage() {
   }
 
   useEffect(() => {
-    void loadGames();
     void loadUploads(businessDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function updateFileConfig(id: string, updater: (old: ReturnFileConfig) => ReturnFileConfig) {
-    setFileConfigs((prev) => prev.map((c) => (c.id === id ? updater(c) : c)));
+  // ✅ Apply auto-detection using businessDate day mapping
+  function applyAutoDetection(dateKey: string, configs: ReturnFileConfig[]): ReturnFileConfig[] {
+    return configs.map((cfg) => {
+      const s = suggestGameFromFileName(cfg.file.name, dateKey);
+
+      if (s.status === "ok") {
+        return {
+          ...cfg,
+          gameId: s.official,
+          autoDetectedGameId: s.official,
+          autoDetectNote: s.note,
+          autoDetectStatus: "ok",
+        };
+      }
+
+      if (s.status === "mismatch_day") {
+        return {
+          ...cfg,
+          gameId: s.official,
+          autoDetectedGameId: s.official,
+          autoDetectNote: s.note,
+          autoDetectStatus: "mismatch_day",
+        };
+      }
+
+      return {
+        ...cfg,
+        gameId: "",
+        autoDetectedGameId: null,
+        autoDetectNote: s.note,
+        autoDetectStatus: s.status,
+      };
+    });
+  }
+
+  // ✅ When businessDate changes: update uploads list + drawDate/draw for all files + rerun auto-detect
+  function handleBusinessDateChange(v: string) {
+    setBusinessDate(v);
+    void loadUploads(v);
+
+    setFileConfigs((prev) =>
+      applyAutoDetection(
+        v,
+        prev.map((cfg) => ({
+          ...cfg,
+          drawDate: v,
+          draw: formatDateToDDMMYYYY(v),
+        }))
+      )
+    );
   }
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
+
     if (!files || files.length === 0) {
       setFileConfigs([]);
       setPreviewTable([]);
@@ -264,16 +317,31 @@ export default function ReturnsPage() {
 
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
+
       list.push({
         id: `${f.name}-${i}-${now}`,
         file: f,
+
         gameId: "",
-        draw: "",
-        drawDate: "",
+
+        // ✅ draw comes from top date picker
+        drawDate: businessDate,
+        draw: formatDateToDDMMYYYY(businessDate),
+
+        // ✅ default trim digits (as requested)
+        trimDigits: 2,
+
+        autoDetectedGameId: null,
+        autoDetectNote: null,
+        autoDetectStatus: "not_found",
+
+        // ✅ per-file V1 selection defaults to NONE
+        v1Id: null,
+        strictMatchGameDraw: false,
       });
     }
 
-    setFileConfigs(list);
+    setFileConfigs(applyAutoDetection(businessDate, list));
     setPreviewTable([]);
     setPreviewLabel("");
     setStructuredReturns([]);
@@ -305,18 +373,23 @@ export default function ReturnsPage() {
       return;
     }
 
-    if (!cfg.gameId) {
-      setError(`Please select a game for file: ${cfg.file.name} before saving.`);
+    if (cfg.autoDetectStatus !== "ok") {
+      setError(`Cannot save "${cfg.file.name}": ${cfg.autoDetectNote || "Auto-detection failed."}`);
       return;
     }
 
-    const game = games.find((g) => g.id === cfg.gameId);
-    const gameName = game?.name ?? "";
+    if (!cfg.gameId) {
+      setError(`Game not set for file: ${cfg.file.name}`);
+      return;
+    }
 
     try {
       setError(null);
       setSavingFileId(cfg.id);
-      await saveUploadedFile(cfg.file, cfg.gameId, gameName, businessDate);
+
+      // Save under gameId as both id and name (same pattern you used in Sales page)
+await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
+
       await loadUploads(businessDate);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error saving return file to Firebase.";
@@ -326,10 +399,10 @@ export default function ReturnsPage() {
     }
   }
 
-  async function handleDeleteUpload(record: UploadedFileRecord) {
+  async function handleDeleteUpload(record: ReturnUploadedFileRecord) {
     try {
       setDeletingUploadId(record.id);
-      await deleteUploadedFile(record);
+      await deleteReturnUploadedFile(record);
       await loadUploads(businessDate);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error deleting uploaded file.";
@@ -339,26 +412,59 @@ export default function ReturnsPage() {
     }
   }
 
-  async function handleV1FileChange(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    setV1File(file);
-    setV1Existing([]);
-    setV1Error(null);
+  // ✅ Upload multiple V1 files into a library
+  async function handleV1LibraryChange(e: ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    setV1LibraryError(null);
 
-    if (!file) return;
+    if (!files || files.length === 0) {
+      setV1Bundles([]);
+      // also clear per-file selection
+      setFileConfigs((prev) => prev.map((c) => ({ ...c, v1Id: null })));
+      return;
+    }
 
-    try {
-      const sheet = await readFirstSheet(file);
-      const parsed = parseV1FromSheet(sheet);
-      setV1Existing(parsed);
+    const bundles: V1FileBundle[] = [];
 
-      if (parsed.length === 0) {
-        setV1Error("V1 file loaded, but no valid V1 rows detected. Check columns (DealerCode + From + To/Qty).");
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const id = `${f.name}-${i}-${Date.now()}`;
+
+      try {
+        const sheet = await readFirstSheet(f);
+        const rows = parseV1FromSheet(sheet);
+
+        bundles.push({
+          id,
+          fileName: f.name,
+          rows,
+          error: rows.length === 0
+            ? "No valid V1 rows detected (need DealerCode + From + To/Qty)."
+            : null,
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Failed to read V1 file.";
+        bundles.push({
+          id,
+          fileName: f.name,
+          rows: [],
+          error: msg,
+        });
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to read V1 file.";
-      setV1Error(msg);
-      setV1Existing([]);
+    }
+
+    setV1Bundles(bundles);
+
+    // If old v1Id selections are now invalid, reset them
+    const validIds = new Set(bundles.map((b) => b.id));
+    setFileConfigs((prev) =>
+      prev.map((c) => (c.v1Id && !validIds.has(c.v1Id) ? { ...c, v1Id: null } : c))
+    );
+
+    // Surface a summary error if all failed
+    const hasAnyGood = bundles.some((b) => b.rows.length > 0 && !b.error);
+    if (!hasAnyGood) {
+      setV1LibraryError("V1 files loaded, but none produced valid rows. Check V1 format.");
     }
   }
 
@@ -374,18 +480,19 @@ export default function ReturnsPage() {
     }
 
     for (const cfg of fileConfigs) {
-      if (!cfg.gameId) {
-        setError(`Please select the Game for return file: ${cfg.file.name}`);
+      if (cfg.autoDetectStatus !== "ok") {
+        setError(`Fix file "${cfg.file.name}": ${cfg.autoDetectNote || "Auto-detection failed."}`);
         return;
       }
-      if (!cfg.drawDate.trim()) {
-        setError(`Please pick the Draw date for return file: ${cfg.file.name}`);
+      if (!cfg.gameId) {
+        setError(`Game not set for return file: ${cfg.file.name}`);
+        return;
+      }
+      if (!businessDate) {
+        setError("Please pick a business date at the top.");
         return;
       }
     }
-
-    // sanitize prefix: keep only 2 digits
-    const prefix2 = (defaultPrefix2 || "").replace(/[^\d]/g, "").slice(0, 2);
 
     setIsLoading(true);
 
@@ -393,19 +500,19 @@ export default function ReturnsPage() {
       const allRows: ReturnRow[] = [];
 
       for (const cfg of fileConfigs) {
-        const game = games.find((g) => g.id === cfg.gameId);
-        const gameNameOverride = game?.name ?? "";
-
         const normalized = await readFirstSheet(cfg.file);
 
-        // IMPORTANT: pass v1Existing + strict option
+        // ✅ pick V1 rows per file (or none)
+        const v1ForThisFile =
+          cfg.v1Id ? (v1Bundles.find((b) => b.id === cfg.v1Id)?.rows ?? []) : [];
+
         const rows = await buildReturnRows(
           normalized,
-          gameNameOverride,
-          cfg.draw,
-          prefix2,
-          v1Existing,
-          { strictMatchGameDraw }
+          cfg.gameId,                       // official code
+          formatDateToDDMMYYYY(businessDate),
+          cfg.trimDigits,
+          v1ForThisFile,
+          { strictMatchGameDraw: cfg.strictMatchGameDraw }
         );
 
         allRows.push(...rows);
@@ -414,11 +521,7 @@ export default function ReturnsPage() {
       setStructuredReturns(allRows);
 
       if (allRows.length === 0) {
-        setError(
-          v1Existing.length > 0
-            ? "No valid return rows after applying V1 exclusion (everything was already in V1)."
-            : "No valid return rows detected. Please check the Excel format."
-        );
+        setError("No valid return rows detected (or everything was excluded by selected V1).");
       } else {
         const ws = XLSX.utils.json_to_sheet(allRows);
         const wb = XLSX.utils.book_new();
@@ -455,24 +558,27 @@ export default function ReturnsPage() {
 
   const totalQty = structuredReturns.reduce((sum, r) => sum + (r.Qty || 0), 0);
 
-  const v1Status = useMemo(() => {
-    if (!v1File) return "No V1 file loaded (no exclusion applied).";
-    if (v1Error) return `V1 file loaded but error: ${v1Error}`;
-    return `V1 loaded: ${v1Existing.length} rows (exclusion ON).`;
-  }, [v1File, v1Error, v1Existing.length]);
+  const v1LibraryStatus = useMemo(() => {
+    if (v1Bundles.length === 0) return "No V1 files loaded (per-file exclusion disabled).";
+    const ok = v1Bundles.filter((b) => b.rows.length > 0 && !b.error).length;
+    const bad = v1Bundles.length - ok;
+    return `V1 library loaded: ${v1Bundles.length} files (${ok} OK, ${bad} with issues).`;
+  }, [v1Bundles]);
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-900">
       <div className="w-full max-w-6xl p-6 rounded-lg bg-white shadow border border-gray-300 space-y-6">
-        <h1 className="text-xl font-semibold">Agent Return Report → Structured Return Table</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-semibold">Agent Return Report → Structured Return Table</h1>
 
-        <div className="flex justify-end mt-2">
-          <Link
-            href="/"
-            className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow"
-          >
-            Go to Sales Page
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/"
+              className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium shadow"
+            >
+              Go to Sales Page
+            </Link>
+          </div>
         </div>
 
         {/* Business Date + Upload History */}
@@ -481,20 +587,20 @@ export default function ReturnsPage() {
             <div>
               <h2 className="text-sm font-medium text-gray-800">Business date / upload date</h2>
               <p className="text-[11px] text-gray-600">
-                Return files saved to Firebase are tagged with this date and can be fetched or deleted later.
+                This date is also used as the <b>Draw Date</b> for all return files.
               </p>
             </div>
-            <div>
+
+            <div className="flex items-center gap-3">
               <input
                 type="date"
                 value={businessDate}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setBusinessDate(v);
-                  void loadUploads(v);
-                }}
+                onChange={(e) => handleBusinessDateChange(e.target.value)}
                 className="rounded border border-gray-300 px-2 py-1 text-sm bg-white"
               />
+              <div className="text-[11px] text-gray-700">
+                Draw: <b>{formatDateToDDMMYYYY(businessDate)}</b>
+              </div>
             </div>
           </div>
 
@@ -556,14 +662,6 @@ export default function ReturnsPage() {
           </div>
         </section>
 
-        {/* Game master */}
-        <section className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-3">
-          <h2 className="text-sm font-medium text-gray-800">Game Master (shared with sales page)</h2>
-          {gamesLoading && <p className="text-xs text-gray-600">Loading games...</p>}
-          {gamesError && <p className="text-xs text-red-600">{gamesError}</p>}
-          {!gamesLoading && !gamesError && <GameAdmin games={games} onRefresh={loadGames} />}
-        </section>
-
         {/* Dealer mapping */}
         <section className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-3">
           <h2 className="text-sm font-medium text-gray-800">Dealer Mapping Configuration</h2>
@@ -571,39 +669,53 @@ export default function ReturnsPage() {
           <DealerAliasEditor />
         </section>
 
-        {/* V1 exclusion section */}
+        {/* ✅ V1 library (multiple files) */}
         <section className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-medium text-gray-800">V1 Exclusion (remove items already in V1)</h2>
-              <p className="text-[11px] text-gray-600">
-                Upload V1 table file (DealerCode + From + To/Qty). Any overlaps will be removed from output.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <label className="text-[11px] text-gray-700 flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={strictMatchGameDraw}
-                  onChange={(e) => setStrictMatchGameDraw(e.target.checked)}
-                />
-                Strict match Dealer + Game + Draw
-              </label>
-            </div>
+          <div>
+            <h2 className="text-sm font-medium text-gray-800">V1 Exclusion Library (optional)</h2>
+            <p className="text-[11px] text-gray-600">
+              Upload one or more V1 tables. Then, for each return file you can choose: <b>None</b> or select which V1
+              file to exclude against.
+            </p>
           </div>
 
           <div className="bg-white border border-gray-300 rounded-lg p-3 space-y-2">
             <input
               type="file"
               accept=".xls,.xlsx"
-              onChange={handleV1FileChange}
+              multiple
+              onChange={handleV1LibraryChange}
               className="w-full text-sm"
             />
             <p className="text-[11px] text-gray-700">
-              Status: <b>{v1Status}</b>
+              Status: <b>{v1LibraryStatus}</b>
             </p>
-            {v1Error && <p className="text-[11px] text-red-600">{v1Error}</p>}
+            {v1LibraryError && <p className="text-[11px] text-red-600">{v1LibraryError}</p>}
+
+            {v1Bundles.length > 0 && (
+              <div className="max-h-40 overflow-auto border border-gray-200 rounded p-2">
+                <table className="min-w-full text-[11px]">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="px-2 py-1 text-left font-medium">V1 File</th>
+                      <th className="px-2 py-1 text-right font-medium">Rows</th>
+                      <th className="px-2 py-1 text-left font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {v1Bundles.map((b) => (
+                      <tr key={b.id} className="border-t border-gray-200">
+                        <td className="px-2 py-1 whitespace-nowrap">{b.fileName}</td>
+                        <td className="px-2 py-1 text-right">{b.rows.length}</td>
+                        <td className="px-2 py-1">
+                          {b.error ? <span className="text-red-600">{b.error}</span> : "OK"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </section>
 
@@ -624,98 +736,150 @@ export default function ReturnsPage() {
                 className="w-full text-sm"
               />
               <p className="mt-1 text-[11px] text-gray-500">
-                Select multiple return files (each file can be a different game).
-              </p>
-            </div>
-
-            {/* Default prefix input */}
-            <div className="bg-white border border-gray-300 rounded-lg p-3">
-              <label className="block text-xs mb-1 text-gray-700">
-                Default 2-digit prefix for website barcode (optional)
-              </label>
-              <input
-                type="text"
-                value={defaultPrefix2}
-                onChange={(e) => setDefaultPrefix2(e.target.value)}
-                className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
-                placeholder="09"
-              />
-              <p className="text-[11px] text-gray-600 mt-1">
-                Used only when barcode is shorter than 7 digits after reading.
+                Select multiple return files. Game is auto-detected from file name + selected business date.
               </p>
             </div>
 
             {/* Per-file config cards */}
             {fileConfigs.length > 0 && (
               <div className="space-y-3">
-                {fileConfigs.map((cfg, idx) => (
-                  <div key={cfg.id} className="border border-gray-300 rounded-lg p-3 bg-white space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs font-medium text-gray-800">
-                        File {idx + 1}: {cfg.file.name}
-                      </div>
-                      <div className="flex items-center gap-2 text-[11px] text-gray-600">
-                        <button
-                          type="button"
-                          onClick={() => void handlePreviewFile(cfg.id)}
-                          className="px-2 py-0.5 rounded border border-gray-300 bg-gray-100 hover:bg-gray-200"
-                        >
-                          Preview raw return Excel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleSaveFile(cfg.id)}
-                          disabled={savingFileId === cfg.id || !businessDate || !cfg.gameId}
-                          className="px-2 py-0.5 rounded border border-blue-500 bg-blue-50 text-blue-700 disabled:opacity-60"
-                        >
-                          {savingFileId === cfg.id ? "Saving…" : "Save to Firebase"}
-                        </button>
-                      </div>
-                    </div>
+                {fileConfigs.map((cfg, idx) => {
+                  const canSave =
+                    !!businessDate &&
+                    cfg.autoDetectStatus === "ok" &&
+                    !!cfg.gameId &&
+                    savingFileId !== cfg.id;
 
-                    {/* Game */}
-                    <div>
-                      <label className="block text-xs mb-1 text-gray-700">Game for this return file</label>
-                      <select
-                        value={cfg.gameId}
-                        onChange={(e) =>
-                          updateFileConfig(cfg.id, (old) => ({
-                            ...old,
-                            gameId: e.target.value,
-                          }))
-                        }
-                        className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
-                      >
-                        <option value="">-- Select game --</option>
-                        {games.map((g) => (
-                          <option key={g.id} value={g.id}>
-                            {g.name} {g.board ? `(${g.board})` : ""}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                  return (
+                    <div key={cfg.id} className="border border-gray-300 rounded-lg p-3 bg-white space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-medium text-gray-800">
+                          File {idx + 1}: {cfg.file.name}
+                        </div>
 
-                    {/* Draw date */}
-                    <div>
-                      <label className="block text-xs mb-1 text-gray-700">Draw Date (dd/mm/yyyy)</label>
-                      <input
-                        type="date"
-                        value={cfg.drawDate}
-                        onChange={(e) =>
-                          updateFileConfig(cfg.id, (old) => ({
-                            ...old,
-                            drawDate: e.target.value,
-                            draw: formatDateToDDMMYYYY(e.target.value),
-                          }))
-                        }
-                        className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
-                      />
-                      <p className="text-[11px] text-gray-600 mt-1">
-                        Formatted Draw: <b>{cfg.draw || "Not selected"}</b>
-                      </p>
+                        <div className="flex items-center gap-2 text-[11px] text-gray-600">
+                          <button
+                            type="button"
+                            onClick={() => void handlePreviewFile(cfg.id)}
+                            className="px-2 py-0.5 rounded border border-gray-300 bg-gray-100 hover:bg-gray-200"
+                          >
+                            Preview raw return Excel
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveFile(cfg.id)}
+                            disabled={!canSave}
+                            className="px-2 py-0.5 rounded border border-blue-500 bg-blue-50 text-blue-700 disabled:opacity-60"
+                          >
+                            {savingFileId === cfg.id ? "Saving…" : "Save to Firebase"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Draw date from top */}
+                      <div className="text-[11px] text-gray-700">
+                        Draw Date (from top): <b>{formatDateToDDMMYYYY(businessDate)}</b>
+                      </div>
+
+                      {/* Trim digits */}
+                      <div>
+                        <label className="block text-xs mb-1 text-gray-700">
+                          Trim prefix digits (barcode trimming)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={10}
+                          value={cfg.trimDigits}
+                          onChange={(e) => {
+                            const raw = Number(e.target.value || 0);
+                            const v = Math.max(0, Math.min(10, Number.isFinite(raw) ? raw : 0));
+                            updateFileConfig(cfg.id, (old) => ({
+                              ...old,
+                              trimDigits: Math.trunc(v),
+                            }));
+                          }}
+                          className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
+                        />
+                        <p className="text-[11px] text-gray-600 mt-1">
+                          Default is <b>2</b>. Example: Trim=2 turns &quot;056600001&ldquo; → &quot;6600001&quot; then output stays as 7 digits.
+                        </p>
+                      </div>
+
+                      {/* Auto-selected game (display only) */}
+                      <div>
+                        <select
+                          value={cfg.gameId}
+                          disabled
+                          className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-gray-100 cursor-not-allowed"
+                        >
+                          <option value="">-- Auto selected --</option>
+                          {OFFICIAL_GAMES.map((g) => (
+                            <option key={g.id} value={g.id}>
+                              {g.name}
+                            </option>
+                          ))}
+                        </select>
+
+                        {cfg.autoDetectNote && (
+                          <p
+                            className={`mt-1 text-[11px] ${
+                              cfg.autoDetectStatus === "ok" ? "text-gray-600" : "text-red-600"
+                            }`}
+                          >
+                            {cfg.autoDetectNote}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* ✅ Per-file V1 selection */}
+                      <div className="border border-gray-200 rounded p-3 bg-gray-50 space-y-2">
+                        <div className="text-xs font-medium text-gray-800">V1 Exclusion (optional, per file)</div>
+
+                        <div>
+                          <label className="block text-[11px] mb-1 text-gray-700">
+                            Select V1 file to exclude against
+                          </label>
+                          <select
+                            value={cfg.v1Id ?? ""}
+                            onChange={(e) =>
+                              updateFileConfig(cfg.id, (old) => ({
+                                ...old,
+                                v1Id: e.target.value ? e.target.value : null,
+                              }))
+                            }
+                            className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
+                          >
+                            <option value="">None (no exclusion)</option>
+                            {v1Bundles.map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.fileName} ({b.rows.length} rows){b.error ? " - ERROR" : ""}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-[11px] text-gray-600 mt-1">
+                            You can keep it <b>None</b> for some files and select a V1 for others.
+                          </p>
+                        </div>
+
+                        <label className="text-[11px] text-gray-700 flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={cfg.strictMatchGameDraw}
+                            onChange={(e) =>
+                              updateFileConfig(cfg.id, (old) => ({
+                                ...old,
+                                strictMatchGameDraw: e.target.checked,
+                              }))
+                            }
+                          />
+                          Strict match Dealer + Game + Draw (only if your V1 includes Game/Draw)
+                        </label>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -748,10 +912,7 @@ export default function ReturnsPage() {
                     {previewTable.map((row, rIdx) => (
                       <tr key={rIdx} className={rIdx % 2 === 0 ? "bg-white" : "bg-gray-100"}>
                         {row.map((cell, cIdx) => (
-                          <td
-                            key={cIdx}
-                            className="px-3 py-1.5 border border-gray-200 whitespace-nowrap"
-                          >
+                          <td key={cIdx} className="px-3 py-1.5 border border-gray-200 whitespace-nowrap">
                             {renderCell(cell)}
                           </td>
                         ))}
@@ -813,6 +974,12 @@ export default function ReturnsPage() {
               </div>
             </div>
           </section>
+        )}
+
+        {previewTable.length === 0 && structuredReturns.length === 0 && !isLoading && !error && (
+          <p className="text-xs text-gray-600">
+            Upload return files, confirm auto-detected game, optionally select a V1 exclusion per file, then build the structured Excel.
+          </p>
         )}
       </div>
     </main>
