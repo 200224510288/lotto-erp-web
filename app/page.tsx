@@ -2,8 +2,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import * as XLSX from "xlsx";
+import { useAuth } from "./lib/AuthProvider";
+import { signOut } from "firebase/auth";
+import { auth } from "./lib/firebase";
 
 import {
   buildStructuredRows,
@@ -167,6 +171,10 @@ function recalcValidationBlocks(blocks: AvailabilityBlock[]): string | null {
 }
 
 export default function HomePage() {
+  const router = useRouter();
+  const { user, loading } = useAuth();
+
+  // ✅ ALL hooks must be declared BEFORE any early return
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<UiWarning[]>([]);
@@ -263,18 +271,33 @@ export default function HomePage() {
     });
   }
 
-  // ------------- Initial load -------------
+  // ✅ Redirect if not logged in (hook must be unconditional)
   useEffect(() => {
+    if (!loading && !user) {
+      router.replace(`/login?redirect=/`);
+    }
+  }, [loading, user, router]);
+
+  // ✅ Load uploads when auth is ready + date changes
+  useEffect(() => {
+    if (loading) return;
+    if (!user) return;
     void loadUploads(selectedDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loading, user, selectedDate]);
 
-  // ------------- Re-run auto-detection when date changes -------------
+  // ✅ Re-run auto-detection when date changes (loop-safe)
   useEffect(() => {
-    if (fileConfigs.length === 0) return;
-    setFileConfigs((prev) => applyAutoDetection(selectedDate, prev));
+    setFileConfigs((prev) => {
+      if (prev.length === 0) return prev;
+      return applyAutoDetection(selectedDate, prev);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate]);
+
+  // ✅ Early return allowed only AFTER all hooks
+  if (loading) return null;
+  if (!user) return null;
 
   // ------------- File selection -------------
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
@@ -455,10 +478,7 @@ export default function HomePage() {
       const allWarnings: UiWarning[] = [];
 
       for (const cfg of fileConfigs) {
-        const file = cfg.file;
-        const gameNameOverride = cfg.gameId;
-
-        const arrayBuffer = await file.arrayBuffer();
+        const arrayBuffer = await cfg.file.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, { type: "array" });
         const sheetName = workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
@@ -488,13 +508,12 @@ export default function HomePage() {
         const structuredRowsForFile = await buildStructuredRows(
           normalized,
           availabilitySegments,
-          gameNameOverride,
+          cfg.gameId,
           cfg.enableGapFill,
           cfg.drawDate,
           cfg.trimDigits
         );
 
-        // Only overlap warnings remain
         msgs.push(...detectDealerOverlaps(structuredRowsForFile));
 
         if (msgs.length > 0) {
@@ -524,7 +543,6 @@ export default function HomePage() {
         const text = allWarnings
           .map((w) => `File: ${w.fileName}\n- ${w.messages.join("\n- ")}`)
           .join("\n\n");
-
         alert(`Warnings detected:\n\n${text}`);
       }
 
@@ -536,11 +554,11 @@ export default function HomePage() {
         XLSX.utils.book_append_sheet(newWb, ws, "Structured");
 
         const wbout = XLSX.write(newWb, { bookType: "xlsx", type: "array" });
-        const blob = new Blob([wbout], {
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        });
-
-        setDownloadBlob(blob);
+        setDownloadBlob(
+          new Blob([wbout], {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          })
+        );
       }
 
       setFileName("AllGames_structured.xlsx");
@@ -574,31 +592,40 @@ export default function HomePage() {
           <h1 className="text-xl font-semibold">
             ERP Summary → Structured Dealer Table (multi-game, per-file ranges)
           </h1>
-         <Link
-      href="/returns"
-      className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow"
-    >
-      Go to Returns Page
-    </Link>
 
-          {warnings.length > 0 && (
-            <div className="border border-amber-300 bg-amber-50 rounded p-3 text-[12px] text-amber-900">
-              <div className="font-medium mb-1">Warnings</div>
-              <div className="space-y-2">
-                {warnings.map((w) => (
-                  <div key={w.fileId}>
-                    <div className="font-medium">{w.fileName}</div>
-                    <ul className="list-disc pl-5">
-                      {w.messages.map((m, i) => (
-                        <li key={i}>{m}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <Link
+            href="/returns"
+            className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow"
+          >
+            Go to Returns Page
+          </Link>
+          <button
+  type="button"
+  onClick={() => signOut(auth)}
+  className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium shadow"
+>
+  Logout
+</button>
+
         </div>
+
+        {warnings.length > 0 && (
+          <div className="border border-amber-300 bg-amber-50 rounded p-3 text-[12px] text-amber-900">
+            <div className="font-medium mb-1">Warnings</div>
+            <div className="space-y-2">
+              {warnings.map((w) => (
+                <div key={w.fileId}>
+                  <div className="font-medium">{w.fileName}</div>
+                  <ul className="list-disc pl-5">
+                    {w.messages.map((m, i) => (
+                      <li key={i}>{m}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Business Date + Upload History */}
         <section className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-3">
@@ -617,7 +644,6 @@ export default function HomePage() {
                 onChange={(e) => {
                   const v = e.target.value;
                   setSelectedDate(v);
-                  void loadUploads(v);
                 }}
                 className="rounded border border-gray-300 px-2 py-1 text-sm bg-white"
               />
@@ -723,7 +749,10 @@ export default function HomePage() {
                     savingFileId !== cfg.id;
 
                   return (
-                    <div key={cfg.id} className="border border-gray-300 rounded-lg p-3 bg-white space-y-2">
+                    <div
+                      key={cfg.id}
+                      className="border border-gray-300 rounded-lg p-3 bg-white space-y-2"
+                    >
                       <div className="flex items-center justify-between">
                         <div className="text-xs font-medium text-gray-800">
                           File {index + 1}: {cfg.file.name}
@@ -982,7 +1011,9 @@ export default function HomePage() {
                         </div>
 
                         {cfg.validationWarning && (
-                          <p className="mt-1 text-[11px] text-amber-700">{cfg.validationWarning}</p>
+                          <p className="mt-1 text-[11px] text-amber-700">
+                            {cfg.validationWarning}
+                          </p>
                         )}
                       </div>
                     </div>
@@ -1018,9 +1049,15 @@ export default function HomePage() {
                 <table className="min-w-full text-xs border-collapse">
                   <tbody>
                     {previewTable.map((row, rIdx) => (
-                      <tr key={rIdx} className={rIdx % 2 === 0 ? "bg-white" : "bg-gray-100"}>
+                      <tr
+                        key={rIdx}
+                        className={rIdx % 2 === 0 ? "bg-white" : "bg-gray-100"}
+                      >
                         {row.map((cell, cIdx) => (
-                          <td key={cIdx} className="px-3 py-1.5 border border-gray-200 whitespace-nowrap">
+                          <td
+                            key={cIdx}
+                            className="px-3 py-1.5 border border-gray-200 whitespace-nowrap"
+                          >
                             {renderCell(cell)}
                           </td>
                         ))}
@@ -1069,7 +1106,10 @@ export default function HomePage() {
                   </thead>
                   <tbody>
                     {structured.map((row, idx) => (
-                      <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-gray-100"}>
+                      <tr
+                        key={idx}
+                        className={idx % 2 === 0 ? "bg-white" : "bg-gray-100"}
+                      >
                         <td className="px-3 py-1.5 whitespace-nowrap">{row.DealerCode}</td>
                         <td className="px-3 py-1.5 whitespace-nowrap">{row.Game}</td>
                         <td className="px-3 py-1.5 whitespace-nowrap">{row.Draw}</td>

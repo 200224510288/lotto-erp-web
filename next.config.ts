@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  ...(process.env.NODE_ENV === "development"
+    ? ({ devIndicators: false } as unknown as NextConfig)
+    : {}),
 };
 
 export default nextConfig;
