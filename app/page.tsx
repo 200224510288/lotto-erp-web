@@ -235,6 +235,12 @@ export default function HomePage() {
     }
   }
 
+  function formatBarcodeForOutput(value: number, minLen = 7): string {
+  const s = String(value);
+  return s.length >= minLen ? s : s.padStart(minLen, "0");
+}
+
+
   // ------------- Apply auto-detection (NO manual selection) -------------
   function applyAutoDetection(dateKey: string, configs: FileConfig[]): FileConfig[] {
     return configs.map((cfg) => {
@@ -528,14 +534,13 @@ export default function HomePage() {
       }
 
       // INTERNAL → VIEW rows (no To)
-      const allStructuredView: StructuredRow[] = allStructuredInternal.map((r) => ({
-        DealerCode: r.DealerCode,
-        Game: r.Game,
-        Draw: r.Draw,
-        From: r.From,
-        Qty: r.Qty,
-      }));
-
+   const allStructuredView: StructuredRow[] = allStructuredInternal.map((r) => ({
+  DealerCode: r.DealerCode,
+  Game: r.Game,
+  Draw: r.Draw,
+  From: formatBarcodeForOutput(r.From, 7), // ✅ keep leading zeros
+  Qty: r.Qty,
+}));
       setStructured(allStructuredView);
       setWarnings(allWarnings);
 

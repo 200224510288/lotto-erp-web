@@ -39,7 +39,7 @@ export type StructuredRow = {
   DealerCode: string;
   Game: string;
   Draw: string;
-  From: number;
+  From: string;   // ✅ was number
   Qty: number;
 };
 
