@@ -593,26 +593,38 @@ export default function HomePage() {
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-900">
       <div className="w-full max-w-6xl p-6 rounded-lg bg-white shadow border border-gray-300 space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold">
-            ERP Summary → Structured Dealer Table (multi-game, per-file ranges)
-          </h1>
+        <div className="flex items-center justify-between gap-4">
+  <h1 className="text-xl font-semibold">
+    ERP Summary → Structured Dealer Table (multi-game, per-file ranges)
+  </h1>
 
-          <Link
-            href="/returns"
-            className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow"
-          >
-            Go to Returns Page
-          </Link>
-          <button
-  type="button"
-  onClick={() => signOut(auth)}
-  className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium shadow"
->
-  Logout
-</button>
+  <div className="flex items-center gap-2">
+    {/* Existing Returns Page */}
+    <Link
+      href="/returns"
+      className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow"
+    >
+      Go to Returns Page
+    </Link>
 
-        </div>
+    {/* New Returns Analyzer */}
+    <Link
+      href="/return-analysis"
+      className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium shadow"
+    >
+      Returns Analyzer
+    </Link>
+
+    {/* Logout */}
+    <button
+      type="button"
+      onClick={() => signOut(auth)}
+      className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium shadow"
+    >
+      Logout
+    </button>
+  </div>
+</div>
 
         {warnings.length > 0 && (
           <div className="border border-amber-300 bg-amber-50 rounded p-3 text-[12px] text-amber-900">
