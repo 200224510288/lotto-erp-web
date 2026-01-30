@@ -326,7 +326,7 @@ function downloadAllAsPdf(filename: string, meta: { date: string; day: string },
       margin: { left: marginX, right: marginX },
     });
 
-    y = doc.lastAutoTable.finalY + 12;
+    y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 12;
   }
 
   doc.save(filename);
