@@ -475,7 +475,8 @@ export default function HomePage() {
         uploads.map(async (u) => {
           if (!u.downloadUrl) return;
           try {
-            const res = await fetch(u.downloadUrl);
+            const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
+            const res = await fetch(proxyUrl);
             const blob = await res.blob();
             // Prefix file name to avoid duplicates if any
             zip.file(u.fileName, blob);
