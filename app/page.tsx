@@ -202,6 +202,8 @@ export default function HomePage() {
   // Small state flags for per-item operations
   const [savingFileId, setSavingFileId] = useState<string | null>(null);
   const [deletingUploadId, setDeletingUploadId] = useState<string | null>(null);
+  const [isSavingAll, setIsSavingAll] = useState(false);
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
 
   // ------------- FileConfig update helper -------------
   function updateFileConfig(
@@ -236,9 +238,9 @@ export default function HomePage() {
   }
 
   function formatBarcodeForOutput(value: number, minLen = 7): string {
-  const s = String(value);
-  return s.length >= minLen ? s : s.padStart(minLen, "0");
-}
+    const s = String(value);
+    return s.length >= minLen ? s : s.padStart(minLen, "0");
+  }
 
 
   // ------------- Apply auto-detection (NO manual selection) -------------
@@ -427,6 +429,79 @@ export default function HomePage() {
     }
   }
 
+  // ------------- Save All Files to Firebase -------------
+  async function handleSaveAll() {
+    if (!selectedDate) {
+      setError("Please pick a business date at the top before saving files.");
+      return;
+    }
+
+    const validConfigs = fileConfigs.filter(
+      (cfg) => cfg.autoDetectStatus === "ok" && !!cfg.gameId
+    );
+
+    if (validConfigs.length === 0) {
+      setError("No valid files to save (check auto-detect status and game ID).");
+      return;
+    }
+
+    setIsSavingAll(true);
+    setError(null);
+
+    try {
+      for (const cfg of validConfigs) {
+        setSavingFileId(cfg.id);
+        await saveUploadedFile(cfg.file, cfg.gameId, cfg.gameId, selectedDate);
+      }
+      await loadUploads(selectedDate);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error saving files to Firebase.";
+      setError(`Error during Save All: ${msg}`);
+    } finally {
+      setSavingFileId(null);
+      setIsSavingAll(false);
+    }
+  }
+
+  // ------------- Download All Uploads as ZIP -------------
+  async function handleDownloadAllZip() {
+    if (uploads.length === 0) return;
+    setIsDownloadingAll(true);
+    try {
+      const JSZip = (await import("jszip")).default;
+      const zip = new JSZip();
+
+      await Promise.all(
+        uploads.map(async (u) => {
+          if (!u.downloadUrl) return;
+          try {
+            const res = await fetch(u.downloadUrl);
+            const blob = await res.blob();
+            // Prefix file name to avoid duplicates if any
+            zip.file(u.fileName, blob);
+          } catch (err) {
+            console.error(`Failed to fetch ${u.fileName}`, err);
+          }
+        })
+      );
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = window.URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ERP_Uploads_${selectedDate}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error creating zip:", err);
+      alert("Failed to create ZIP file.");
+    } finally {
+      setIsDownloadingAll(false);
+    }
+  }
+
   // ------------- Delete an uploaded record -------------
   async function handleDeleteUpload(record: UploadedFileRecord) {
     try {
@@ -534,13 +609,13 @@ export default function HomePage() {
       }
 
       // INTERNAL → VIEW rows (no To)
-   const allStructuredView: StructuredRow[] = allStructuredInternal.map((r) => ({
-  DealerCode: r.DealerCode,
-  Game: r.Game,
-  Draw: r.Draw,
-  From: formatBarcodeForOutput(r.From, 7), // ✅ keep leading zeros
-  Qty: r.Qty,
-}));
+      const allStructuredView: StructuredRow[] = allStructuredInternal.map((r) => ({
+        DealerCode: r.DealerCode,
+        Game: r.Game,
+        Draw: r.Draw,
+        From: formatBarcodeForOutput(r.From, 7), // ✅ keep leading zeros
+        Qty: r.Qty,
+      }));
       setStructured(allStructuredView);
       setWarnings(allWarnings);
 
@@ -594,37 +669,37 @@ export default function HomePage() {
     <main className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-900">
       <div className="w-full max-w-6xl p-6 rounded-lg bg-white shadow border border-gray-300 space-y-6">
         <div className="flex items-center justify-between gap-4">
-  <h1 className="text-xl font-semibold">
-    ERP Summary → Structured Dealer Table (multi-game, per-file ranges)
-  </h1>
+          <h1 className="text-xl font-semibold">
+            ERP Summary → Structured Dealer Table (multi-game, per-file ranges)
+          </h1>
 
-  <div className="flex items-center gap-2">
-    {/* Existing Returns Page */}
-    <Link
-      href="/returns"
-      className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow"
-    >
-      Go to Returns Page
-    </Link>
+          <div className="flex items-center gap-2">
+            {/* Existing Returns Page */}
+            <Link
+              href="/returns"
+              className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow"
+            >
+              Go to Returns Page
+            </Link>
 
-    {/* New Returns Analyzer */}
-    <Link
-      href="/return-analysis"
-      className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium shadow"
-    >
-      Returns Analyzer
-    </Link>
+            {/* New Returns Analyzer */}
+            <Link
+              href="/return-analysis"
+              className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium shadow"
+            >
+              Returns Analyzer
+            </Link>
 
-    {/* Logout */}
-    <button
-      type="button"
-      onClick={() => signOut(auth)}
-      className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium shadow"
-    >
-      Logout
-    </button>
-  </div>
-</div>
+            {/* Logout */}
+            <button
+              type="button"
+              onClick={() => signOut(auth)}
+              className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium shadow"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
 
         {warnings.length > 0 && (
           <div className="border border-amber-300 bg-amber-50 rounded p-3 text-[12px] text-amber-900">
@@ -672,7 +747,19 @@ export default function HomePage() {
               <span className="text-xs font-medium text-gray-800">
                 Uploaded ERP files for {selectedDate}
               </span>
-              {uploadsLoading && <span className="text-[11px] text-gray-500">Loading…</span>}
+              <div className="flex items-center gap-2">
+                {uploadsLoading && <span className="text-[11px] text-gray-500">Loading…</span>}
+                {uploads.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleDownloadAllZip}
+                    disabled={isDownloadingAll}
+                    className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-[11px] rounded shadow disabled:opacity-60"
+                  >
+                    {isDownloadingAll ? "Zipping..." : "Download All as ZIP"}
+                  </button>
+                )}
+              </div>
             </div>
 
             {uploadsError && <p className="text-[11px] text-red-600 mb-1">{uploadsError}</p>}
@@ -739,9 +826,21 @@ export default function HomePage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-4">
             <div>
-              <label className="block text-sm mb-1" htmlFor="file">
-                Upload ERP Summary files (.xls or .xlsx)
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm" htmlFor="file">
+                  Upload ERP Summary files (.xls or .xlsx)
+                </label>
+                {fileConfigs.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleSaveAll}
+                    disabled={isSavingAll}
+                    className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded shadow disabled:opacity-60"
+                  >
+                    {isSavingAll ? "Saving All..." : "Save All to Firebase"}
+                  </button>
+                )}
+              </div>
               <input
                 id="file"
                 name="file"
@@ -861,9 +960,8 @@ export default function HomePage() {
 
                         {cfg.autoDetectNote && (
                           <p
-                            className={`mt-1 text-[11px] ${
-                              cfg.autoDetectStatus === "ok" ? "text-gray-600" : "text-red-600"
-                            }`}
+                            className={`mt-1 text-[11px] ${cfg.autoDetectStatus === "ok" ? "text-gray-600" : "text-red-600"
+                              }`}
                           >
                             {cfg.autoDetectNote}
                           </p>
