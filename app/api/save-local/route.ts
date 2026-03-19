@@ -7,7 +7,7 @@ export async function POST(req: Request) {
     const data = await req.arrayBuffer();
     const buffer = Buffer.from(data);
     
-    const targetDir = 'C:\DLB';
+    const targetDir = 'C:\\DLB';
     const targetFile = path.join(targetDir, '1.xlsx');
     
     // Create directory if it doesn't exist
