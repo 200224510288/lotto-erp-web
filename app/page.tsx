@@ -70,6 +70,7 @@ type FileConfig = {
   enableGapFill: boolean;
 
   validationWarning: string | null;
+  isConfirmed: boolean;
 };
 
 type UiWarning = {
@@ -179,6 +180,9 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<UiWarning[]>([]);
 
+  // Sequential config modal state
+  const [currentConfigIndex, setCurrentConfigIndex] = useState<number | null>(null);
+
   // Business date / upload date selection
   const [selectedDate, setSelectedDate] = useState<string>(todayKey());
 
@@ -204,6 +208,27 @@ export default function HomePage() {
   const [deletingUploadId, setDeletingUploadId] = useState<string | null>(null);
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [isDownloadingAll, setIsDownloadingAll] = useState(false);
+  const [isLoadingAllIntoProcessor, setIsLoadingAllIntoProcessor] = useState(false);
+  const [autoOpenWebsite, setAutoOpenWebsite] = useState(true);
+
+  // ------------- Open DLB website -------------
+  function openDLBWebsite() {
+    if (!autoOpenWebsite) return;
+    const width = Math.floor(window.screen.availWidth / 2);
+    const height = window.screen.availHeight;
+    const left = window.screen.availWidth - width;
+
+    // Try to resize current window to left half
+    try {
+      window.moveTo(0, 0);
+      window.resizeTo(width, height);
+    } catch (e) {
+      console.warn("Browser prevented resizing the current window:", e);
+    }
+
+    // Open DLB website on the right half
+    window.open("https://online.dlb.lk/DealerOrder/Create", "DLB_Window", `width=${width},height=${height},left=${left},top=0,resizable=yes,scrollbars=yes`);
+  }
 
   // ------------- FileConfig update helper -------------
   function updateFileConfig(
@@ -345,10 +370,15 @@ export default function HomePage() {
         blockDraftTo: "",
         enableGapFill: true,
         validationWarning: null,
+        isConfirmed: false,
       });
     }
 
     setFileConfigs(applyAutoDetection(selectedDate, list));
+    if (list.length > 0) {
+      setCurrentConfigIndex(0);
+      openDLBWebsite();
+    }
     setPreviewTable([]);
     setPreviewLabel("");
     setStructured([]);
@@ -503,6 +533,112 @@ export default function HomePage() {
     }
   }
 
+  // ------------- Load All Uploads into Processor -------------
+  async function handleLoadAllIntoProcessor() {
+    if (uploads.length === 0) return;
+    setIsLoadingAllIntoProcessor(true);
+    setError(null);
+    try {
+      const now = Date.now();
+      const list: FileConfig[] = [];
+      let index = 0;
+
+      for (const u of uploads) {
+        if (!u.downloadUrl) continue;
+        try {
+          const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
+          const res = await fetch(proxyUrl);
+          const blob = await res.blob();
+          
+          const file = new File([blob], u.fileName, { type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+          list.push({
+            id: `${file.name}-${index}-${now}`,
+            file: file,
+            gameId: u.gameId || "", 
+            drawDate: selectedDate,
+            trimDigits: 0,
+            autoDetectedGameId: null,
+            autoDetectNote: null,
+            autoDetectStatus: "not_found",
+            blocks: [{ id: `block-1-${index}-${now}`, from: "", to: "" }],
+            blockDraftFrom: "",
+            blockDraftTo: "",
+            enableGapFill: true,
+            validationWarning: null,
+            isConfirmed: false,
+          });
+          index++;
+        } catch (err) {
+          console.error(`Failed to load ${u.fileName}`, err);
+        }
+      }
+
+      const finalList = applyAutoDetection(selectedDate, list);
+      setFileConfigs(finalList);
+      if (finalList.length > 0) {
+        setCurrentConfigIndex(0);
+        openDLBWebsite();
+      }
+      setPreviewTable([]);
+      setPreviewLabel("");
+      setStructured([]);
+      setDownloadBlob(null);
+    } catch (err) {
+      console.error("Error loading files:", err);
+      alert("Failed to load files into the processor.");
+    } finally {
+      setIsLoadingAllIntoProcessor(false);
+    }
+  }
+
+  // ------------- Load Individual Upload into Processor -------------
+  async function handleLoadIndividualIntoProcessor(u: UploadedFileRecord) {
+    if (!u.downloadUrl) return;
+    setIsLoadingAllIntoProcessor(true);
+    setError(null);
+    try {
+      const now = Date.now();
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
+      const res = await fetch(proxyUrl);
+      const blob = await res.blob();
+      
+      const file = new File([blob], u.fileName, { type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+      const newConfig: FileConfig = {
+        id: `${file.name}-1-${now}`,
+        file: file,
+        gameId: u.gameId || "", 
+        drawDate: selectedDate,
+        trimDigits: 0,
+        autoDetectedGameId: null,
+        autoDetectNote: null,
+        autoDetectStatus: "not_found",
+        blocks: [{ id: `block-1-1-${now}`, from: "", to: "" }],
+        blockDraftFrom: "",
+        blockDraftTo: "",
+        enableGapFill: true,
+        validationWarning: null,
+        isConfirmed: false,
+      };
+
+      const newList = [...fileConfigs, newConfig];
+      const updatedList = applyAutoDetection(selectedDate, newList);
+      setFileConfigs(updatedList);
+      
+      // If this is the first config added, open the modal
+      if (fileConfigs.length === 0) {
+        setCurrentConfigIndex(0);
+        openDLBWebsite();
+      }
+    } catch (err) {
+      console.error(`Failed to load ${u.fileName}`, err);
+      alert(`Failed to load ${u.fileName} into the processor.`);
+    } finally {
+      setIsLoadingAllIntoProcessor(false);
+    }
+  }
+
   // ------------- Delete an uploaded record -------------
   async function handleDeleteUpload(record: UploadedFileRecord) {
     try {
@@ -531,6 +667,10 @@ export default function HomePage() {
     }
 
     for (const cfg of fileConfigs) {
+      if (!cfg.isConfirmed) {
+        setError(`Please confirm configuration for all files before processing.`);
+        return;
+      }
       if (cfg.autoDetectStatus !== "ok") {
         setError(
           `Fix file "${cfg.file.name}": ${cfg.autoDetectNote || "Auto-detection failed."}`
@@ -652,16 +792,28 @@ export default function HomePage() {
   }
 
   // ------------- Download -------------
-  function handleDownload() {
+  async function handleDownload() {
     if (!downloadBlob) return;
-    const url = window.URL.createObjectURL(downloadBlob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+    
+    try {
+      const res = await fetch('/api/save-local', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+        },
+        body: downloadBlob,
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        alert(data.message);
+      } else {
+        alert(`Failed to save locally: ${data.error}`);
+      }
+    } catch (err: any) {
+      console.error("Local save error:", err);
+      alert(`Error saving file locally: ${err.message}`);
+    }
   }
 
   const totalQty = structured.reduce((sum, r) => sum + (r.Qty || 0), 0);
@@ -746,19 +898,29 @@ export default function HomePage() {
           <div className="border border-gray-200 rounded-lg p-2 bg-white">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-medium text-gray-800">
-                Uploaded ERP files for {selectedDate}
+                Uploaded ERP files for {selectedDate} ({uploads.length} saved)
               </span>
               <div className="flex items-center gap-2">
                 {uploadsLoading && <span className="text-[11px] text-gray-500">Loading…</span>}
                 {uploads.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleDownloadAllZip}
-                    disabled={isDownloadingAll}
-                    className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-[11px] rounded shadow disabled:opacity-60"
-                  >
-                    {isDownloadingAll ? "Zipping..." : "Download All as ZIP"}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleLoadAllIntoProcessor}
+                      disabled={isLoadingAllIntoProcessor}
+                      className="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] rounded shadow disabled:opacity-60"
+                    >
+                      {isLoadingAllIntoProcessor ? "Loading..." : "Load to Processor"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDownloadAllZip}
+                      disabled={isDownloadingAll}
+                      className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-[11px] rounded shadow disabled:opacity-60"
+                    >
+                      {isDownloadingAll ? "Zipping..." : "Download All as ZIP"}
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -787,11 +949,19 @@ export default function HomePage() {
                         <td className="px-2 py-1 whitespace-nowrap">{u.gameName || "-"}</td>
                         <td className="px-2 py-1 text-right">{Math.round((u.size || 0) / 1024)}</td>
                         <td className="px-2 py-1 text-center">
+                          <button
+                            type="button"
+                            onClick={() => void handleLoadIndividualIntoProcessor(u)}
+                            disabled={isLoadingAllIntoProcessor}
+                            className="text-indigo-600 hover:underline mr-2 text-[11px]"
+                          >
+                            Load
+                          </button>
                           <a
                             href={u.downloadUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-blue-600 hover:underline mr-2"
+                            className="text-blue-600 hover:underline mr-2 text-[11px]"
                           >
                             Download
                           </a>
@@ -828,9 +998,23 @@ export default function HomePage() {
           <div className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-4">
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="block text-sm" htmlFor="file">
-                  Upload ERP Summary files (.xls or .xlsx)
-                </label>
+                <div>
+                  <label className="block text-sm" htmlFor="file">
+                    Upload ERP Summary files (.xls or .xlsx)
+                  </label>
+                  <div className="mt-1 flex items-center gap-2">
+                    <input
+                      id="auto-dlb"
+                      type="checkbox"
+                      checked={autoOpenWebsite}
+                      onChange={(e) => setAutoOpenWebsite(e.target.checked)}
+                      className="h-3 w-3"
+                    />
+                    <label htmlFor="auto-dlb" className="text-[11px] text-gray-700">
+                      Auto-open DLB Website (https://online.dlb.lk/DealerOrder/Create) alongside config modal
+                    </label>
+                  </div>
+                </div>
                 {fileConfigs.length > 0 && (
                   <button
                     type="button"
@@ -868,269 +1052,36 @@ export default function HomePage() {
                   return (
                     <div
                       key={cfg.id}
-                      className="border border-gray-300 rounded-lg p-3 bg-white space-y-2"
+                      className="border border-gray-300 rounded-lg p-3 bg-white flex items-center justify-between"
                     >
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs font-medium text-gray-800">
-                          File {index + 1}: {cfg.file.name}
-                        </div>
-
-                        <div className="flex items-center gap-2 text-[11px] text-gray-500">
-                          <span>Size: {Math.round(cfg.file.size / 1024)} KB</span>
-
-                          <button
-                            type="button"
-                            onClick={() => void handlePreviewFile(cfg.id)}
-                            className="px-2 py-0.5 rounded border border-gray-300 bg-gray-100 hover:bg-gray-200"
-                          >
-                            Preview ERP rows
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => void handleSaveFile(cfg.id)}
-                            disabled={!canSave}
-                            className="px-2 py-0.5 rounded border border-blue-500 bg-blue-50 text-blue-700 disabled:opacity-60"
-                          >
-                            {savingFileId === cfg.id ? "Saving…" : "Save to Firebase"}
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Draw date + Trim */}
-                      <div className="space-y-2">
-                        <div>
-                          <label className="block text-xs mb-1 text-gray-700">
-                            Draw date for this file
-                          </label>
-                          <input
-                            type="date"
-                            value={cfg.drawDate}
-                            onChange={(e) =>
-                              updateFileConfig(cfg.id, (old) => ({
-                                ...old,
-                                drawDate: e.target.value,
-                              }))
-                            }
-                            className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
-                          />
-                          <p className="text-[11px] text-gray-500 mt-1">
-                            New ERP report has no DRAW DATE field. This selected date will be used in the output.
-                          </p>
-                        </div>
-
-                        <div>
-                          <label className="block text-xs mb-1 text-gray-700">
-                            Trim prefix digits (ERP + Available blocks)
-                          </label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={10}
-                            value={cfg.trimDigits}
-                            onChange={(e) => {
-                              const raw = Number(e.target.value || 0);
-                              const v = Math.max(0, Math.min(10, Number.isFinite(raw) ? raw : 0));
-                              updateFileConfig(cfg.id, (old) => ({
-                                ...old,
-                                trimDigits: Math.trunc(v),
-                              }));
-                            }}
-                            className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
-                          />
-                          <p className="text-[11px] text-gray-500 mt-1">
-                            Example: Trim=2 turns &quot;324040404&quot; → &quot;4040404&quot;.
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Game select (DISABLED: no manual selection) */}
                       <div>
-                        <select
-                          value={cfg.gameId}
-                          disabled
-                          className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-gray-100 cursor-not-allowed"
+                        <div className="text-xs font-medium text-gray-800 flex items-center gap-2">
+                          File {index + 1}: {cfg.file.name}
+                          {cfg.isConfirmed ? (
+                            <span className="px-1.5 py-0.5 bg-green-100 text-green-800 rounded text-[10px]">Confirmed</span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded text-[10px]">Pending</span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-gray-500 mt-1">
+                          Game: {cfg.gameId || "Auto"} | Date: {cfg.drawDate} | Trim: {cfg.trimDigits} | Blocks: {cfg.blocks.length}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handlePreviewFile(cfg.id)}
+                          className="px-2 py-1 rounded border border-gray-300 bg-gray-100 hover:bg-gray-200 text-[11px]"
                         >
-                          <option value="">-- Auto selected --</option>
-                          {OFFICIAL_GAMES.map((g: (typeof OFFICIAL_GAMES)[0]) => (
-                            <option key={g.id} value={g.id}>
-                              {g.name}
-                            </option>
-                          ))}
-                        </select>
-
-                        {cfg.autoDetectNote && (
-                          <p
-                            className={`mt-1 text-[11px] ${cfg.autoDetectStatus === "ok" ? "text-gray-600" : "text-red-600"
-                              }`}
-                          >
-                            {cfg.autoDetectNote}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Gap fill toggle */}
-                      <div className="mt-2 flex items-center gap-2">
-                        <input
-                          id={`gap-${cfg.id}`}
-                          type="checkbox"
-                          checked={cfg.enableGapFill}
-                          onChange={(e) =>
-                            updateFileConfig(cfg.id, (old) => ({
-                              ...old,
-                              enableGapFill: e.target.checked,
-                            }))
-                          }
-                          className="h-3 w-3"
-                        />
-                        <label htmlFor={`gap-${cfg.id}`} className="text-[11px] text-gray-800">
-                          Enable master gap filling inside available blocks (rows with &quot;#&quot; will create MASTER ranges).
-                        </label>
-                      </div>
-
-                      {/* Availability blocks */}
-                      <div className="mt-3 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-medium text-gray-800">
-                            Available stock blocks (FROM–TO)
-                          </span>
-                          <span className="text-[11px] text-gray-500">
-                            Enter original values; Trim applies automatically.
-                          </span>
-                        </div>
-
-                        {/* Existing blocks list */}
-                        <div className="space-y-1">
-                          {cfg.blocks.map((b, idx) => (
-                            <div key={b.id} className="flex items-center gap-2 text-[11px]">
-                              <span className="w-5 text-right">{idx + 1}.</span>
-
-                              <input
-                                type="text"
-                                value={b.from}
-                                onChange={(e) =>
-                                  updateFileConfig(cfg.id, (old) => ({
-                                    ...old,
-                                    blocks: old.blocks.map((bb) =>
-                                      bb.id === b.id ? { ...bb, from: e.target.value } : bb
-                                    ),
-                                  }))
-                                }
-                                className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs bg-white"
-                                placeholder="FROM barcode"
-                              />
-
-                              <span className="text-gray-600">→</span>
-
-                              <input
-                                type="text"
-                                value={b.to}
-                                onChange={(e) =>
-                                  updateFileConfig(cfg.id, (old) => ({
-                                    ...old,
-                                    blocks: old.blocks.map((bb) =>
-                                      bb.id === b.id ? { ...bb, to: e.target.value } : bb
-                                    ),
-                                  }))
-                                }
-                                className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs bg-white"
-                                placeholder="TO barcode"
-                              />
-
-                              {cfg.blocks.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    updateFileConfig(cfg.id, (old) => ({
-                                      ...old,
-                                      blocks: old.blocks.filter((bb) => bb.id !== b.id),
-                                    }))
-                                  }
-                                  className="px-2 py-0.5 rounded border border-gray-300 bg-white"
-                                >
-                                  Remove
-                                </button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* New block draft row */}
-                        <div className="flex items-center gap-2 text-[11px]">
-                          <span className="w-5 text-right">+</span>
-
-                          <input
-                            type="text"
-                            value={cfg.blockDraftFrom}
-                            onChange={(e) =>
-                              updateFileConfig(cfg.id, (old) => ({
-                                ...old,
-                                blockDraftFrom: e.target.value,
-                              }))
-                            }
-                            className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs bg-white"
-                            placeholder="FROM barcode"
-                          />
-
-                          <span className="text-gray-600">→</span>
-
-                          <input
-                            type="text"
-                            value={cfg.blockDraftTo}
-                            onChange={(e) =>
-                              updateFileConfig(cfg.id, (old) => ({
-                                ...old,
-                                blockDraftTo: e.target.value,
-                              }))
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                const from = cfg.blockDraftFrom.trim();
-                                const to = cfg.blockDraftTo.trim();
-                                if (!from || !to) return;
-
-                                const newId = `block-${Date.now()}-${Math.random()}`;
-
-                                updateFileConfig(cfg.id, (old) => ({
-                                  ...old,
-                                  blocks: [...old.blocks, { id: newId, from, to }],
-                                  blockDraftFrom: "",
-                                  blockDraftTo: "",
-                                }));
-                              }
-                            }}
-                            className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs bg-white"
-                            placeholder="TO barcode"
-                          />
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const from = cfg.blockDraftFrom.trim();
-                              const to = cfg.blockDraftTo.trim();
-                              if (!from || !to) return;
-
-                              const newId = `block-${Date.now()}-${Math.random()}`;
-
-                              updateFileConfig(cfg.id, (old) => ({
-                                ...old,
-                                blocks: [...old.blocks, { id: newId, from, to }],
-                                blockDraftFrom: "",
-                                blockDraftTo: "",
-                              }));
-                            }}
-                            className="px-3 py-1.5 rounded bg-blue-600 text-white text-xs font-medium"
-                          >
-                            Add block
-                          </button>
-                        </div>
-
-                        {cfg.validationWarning && (
-                          <p className="mt-1 text-[11px] text-amber-700">
-                            {cfg.validationWarning}
-                          </p>
-                        )}
+                          Preview Rows
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCurrentConfigIndex(index)}
+                          className="px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs rounded border border-indigo-200"
+                        >
+                          Edit Config
+                        </button>
                       </div>
                     </div>
                   );
@@ -1244,6 +1195,296 @@ export default function HomePage() {
             Upload one or more ERP Summary files, define available stock blocks and gap behaviour per file, then build a
             single combined structured Excel for your Power Automate flow.
           </p>
+        )}
+
+        {/* Modal for Sequential File Configuration */}
+        {currentConfigIndex !== null && fileConfigs[currentConfigIndex] && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overflow-y-auto pt-10 pb-10">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 relative max-h-full flex flex-col">
+              <div className="flex items-center justify-between mb-4 border-b pb-2 shrink-0">
+                <h2 className="text-lg font-bold text-gray-800">
+                  Configure File {currentConfigIndex + 1} of {fileConfigs.length}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setCurrentConfigIndex(null)}
+                  className="text-gray-500 hover:text-gray-800 text-2xl font-bold leading-none"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <div className="overflow-y-auto flex-1 pr-2 pb-4">
+              {(() => {
+                const cfg = fileConfigs[currentConfigIndex];
+                const index = currentConfigIndex;
+                const canSave =
+                  !!selectedDate &&
+                  cfg.autoDetectStatus === "ok" &&
+                  !!cfg.gameId &&
+                  savingFileId !== cfg.id;
+
+                return (
+                  <div className="space-y-4">
+                      {/* Name & Actions */}
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium text-gray-800">
+                          {cfg.file.name}
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                          <span>Size: {Math.round(cfg.file.size / 1024)} KB</span>
+                        </div>
+                      </div>
+
+                      {/* Draw date + Trim */}
+                      <div className="space-y-2">
+                        <div>
+                          <label className="block text-xs mb-1 text-gray-700">
+                            Draw date for this file
+                          </label>
+                          <input
+                            type="date"
+                            value={cfg.drawDate}
+                            onChange={(e) =>
+                              updateFileConfig(cfg.id, (old) => ({
+                                ...old,
+                                drawDate: e.target.value,
+                              }))
+                            }
+                            className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
+                          />
+                          <p className="text-[11px] text-gray-500 mt-1">
+                            New ERP report has no DRAW DATE field. This selected date will be used in the output.
+                          </p>
+                        </div>
+                        <div>
+                          <label className="block text-xs mb-1 text-gray-700">
+                            Trim prefix digits (ERP + Available blocks)
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={10}
+                            value={cfg.trimDigits}
+                            onChange={(e) => {
+                              const raw = Number(e.target.value || 0);
+                              const v = Math.max(0, Math.min(10, Number.isFinite(raw) ? raw : 0));
+                              updateFileConfig(cfg.id, (old) => ({
+                                ...old,
+                                trimDigits: Math.trunc(v),
+                              }));
+                            }}
+                            className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Game select */}
+                      <div>
+                        <select
+                          value={cfg.gameId}
+                          disabled
+                          className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-gray-100 cursor-not-allowed"
+                        >
+                          <option value="">-- Auto selected --</option>
+                          {OFFICIAL_GAMES.map((g: (typeof OFFICIAL_GAMES)[0]) => (
+                            <option key={g.id} value={g.id}>
+                              {g.name}
+                            </option>
+                          ))}
+                        </select>
+                        {cfg.autoDetectNote && (
+                          <p className={`mt-1 text-[11px] ${cfg.autoDetectStatus === "ok" ? "text-gray-600" : "text-red-600"}`}>
+                            {cfg.autoDetectNote}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Gap fill toggle */}
+                      <div className="mt-2 flex items-center gap-2">
+                        <input
+                          id={`gap-modal-${cfg.id}`}
+                          type="checkbox"
+                          checked={cfg.enableGapFill}
+                          onChange={(e) =>
+                            updateFileConfig(cfg.id, (old) => ({
+                              ...old,
+                              enableGapFill: e.target.checked,
+                            }))
+                          }
+                          className="h-3 w-3"
+                        />
+                        <label htmlFor={`gap-modal-${cfg.id}`} className="text-[11px] text-gray-800">
+                          Enable master gap filling
+                        </label>
+                      </div>
+
+                      {/* Availability blocks */}
+                      <div className="mt-3 space-y-2 border border-gray-200 rounded p-3 bg-gray-50">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-gray-800">
+                            Available stock blocks (FROM–TO)
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          {cfg.blocks.map((b, idx) => (
+                            <div key={b.id} className="flex items-center gap-2 text-[11px]">
+                              <span className="w-5 text-right">{idx + 1}.</span>
+                              <input
+                                type="text"
+                                value={b.from}
+                                onChange={(e) =>
+                                  updateFileConfig(cfg.id, (old) => ({
+                                    ...old,
+                                    blocks: old.blocks.map((bb) =>
+                                      bb.id === b.id ? { ...bb, from: e.target.value } : bb
+                                    ),
+                                  }))
+                                }
+                                className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs bg-white"
+                                placeholder="FROM barcode"
+                              />
+                              <span className="text-gray-600">→</span>
+                              <input
+                                type="text"
+                                value={b.to}
+                                onChange={(e) =>
+                                  updateFileConfig(cfg.id, (old) => ({
+                                    ...old,
+                                    blocks: old.blocks.map((bb) =>
+                                      bb.id === b.id ? { ...bb, to: e.target.value } : bb
+                                    ),
+                                  }))
+                                }
+                                className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs bg-white"
+                                placeholder="TO barcode"
+                              />
+                              {cfg.blocks.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateFileConfig(cfg.id, (old) => ({
+                                      ...old,
+                                      blocks: old.blocks.filter((bb) => bb.id !== b.id),
+                                    }))
+                                  }
+                                  className="px-2 py-0.5 rounded border border-gray-300 bg-white"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] pt-1 border-t border-gray-200 mt-2">
+                          <span className="w-5 text-right">+</span>
+                          <input
+                            type="text"
+                            value={cfg.blockDraftFrom}
+                            onChange={(e) =>
+                              updateFileConfig(cfg.id, (old) => ({
+                                ...old,
+                                blockDraftFrom: e.target.value,
+                              }))
+                            }
+                            className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs bg-white"
+                            placeholder="FROM barcode"
+                          />
+                          <span className="text-gray-600">→</span>
+                          <input
+                            type="text"
+                            value={cfg.blockDraftTo}
+                            onChange={(e) =>
+                              updateFileConfig(cfg.id, (old) => ({
+                                ...old,
+                                blockDraftTo: e.target.value,
+                              }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                const from = cfg.blockDraftFrom.trim();
+                                const to = cfg.blockDraftTo.trim();
+                                if (!from || !to) return;
+                                const newId = `block-${Date.now()}-${Math.random()}`;
+                                updateFileConfig(cfg.id, (old) => ({
+                                  ...old,
+                                  blocks: [...old.blocks, { id: newId, from, to }],
+                                  blockDraftFrom: "",
+                                  blockDraftTo: "",
+                                }));
+                              }
+                            }}
+                            className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs bg-white"
+                            placeholder="TO barcode"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const from = cfg.blockDraftFrom.trim();
+                              const to = cfg.blockDraftTo.trim();
+                              if (!from || !to) return;
+                              const newId = `block-${Date.now()}-${Math.random()}`;
+                              updateFileConfig(cfg.id, (old) => ({
+                                ...old,
+                                blocks: [...old.blocks, { id: newId, from, to }],
+                                blockDraftFrom: "",
+                                blockDraftTo: "",
+                              }));
+                            }}
+                            className="px-3 py-1.5 rounded bg-blue-600 text-white text-xs font-medium"
+                          >
+                            Add block
+                          </button>
+                        </div>
+                        {cfg.validationWarning && (
+                          <p className="mt-1 text-[11px] text-amber-700">
+                            {cfg.validationWarning}
+                          </p>
+                        )}
+                      </div>
+                  </div>
+                );
+              })()}
+              </div>
+              <div className="pt-4 border-t flex items-center justify-end gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => { setFileConfigs([]); setCurrentConfigIndex(null); }}
+                  className="px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded"
+                >
+                  Cancel Uploads
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cfg = fileConfigs[currentConfigIndex];
+                    if (cfg.validationWarning) {
+                      alert("Please fix warnings before proceeding: " + cfg.validationWarning);
+                      return;
+                    }
+                    if (!cfg.gameId || cfg.autoDetectStatus !== "ok") {
+                      alert("Game ID is missing or auto-detection failed for this file.");
+                      return;
+                    }
+
+                    // Mark as confirmed
+                    updateFileConfig(cfg.id, old => ({...old, isConfirmed: true}));
+
+                    // Go to next
+                    if (currentConfigIndex + 1 < fileConfigs.length) {
+                      setCurrentConfigIndex(currentConfigIndex + 1);
+                    } else {
+                      setCurrentConfigIndex(null); // Finish
+                    }
+                  }}
+                  className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-medium shadow"
+                >
+                  {currentConfigIndex + 1 < fileConfigs.length ? "Confirm & Next File" : "Confirm & Finish"}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </main>

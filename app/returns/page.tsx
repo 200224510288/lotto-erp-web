@@ -212,11 +212,12 @@ export default function ReturnsPage() {
   const [fileConfigs, setFileConfigs] = useState<ReturnFileConfig[]>([]);
 
   // Upload history
-const [uploads, setUploads] = useState<ReturnUploadedFileRecord[]>([]);
+  const [uploads, setUploads] = useState<ReturnUploadedFileRecord[]>([]);
   const [uploadsLoading, setUploadsLoading] = useState(false);
   const [uploadsError, setUploadsError] = useState<string | null>(null);
   const [savingFileId, setSavingFileId] = useState<string | null>(null);
   const [deletingUploadId, setDeletingUploadId] = useState<string | null>(null);
+  const [isLoadingAllIntoProcessor, setIsLoadingAllIntoProcessor] = useState(false);
 
   // ✅ Multiple V1 files (library), and each return file chooses one (or none)
   const [v1Bundles, setV1Bundles] = useState<V1FileBundle[]>([]);
@@ -412,6 +413,96 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
     }
   }
 
+  // ------------- Load All Uploads into Processor -------------
+  async function handleLoadAllIntoProcessor() {
+    if (uploads.length === 0) return;
+    setIsLoadingAllIntoProcessor(true);
+    setError(null);
+    try {
+      const now = Date.now();
+      const list: ReturnFileConfig[] = [];
+      let index = 0;
+
+      for (const u of uploads) {
+        if (!u.downloadUrl) continue;
+        try {
+          const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
+          const res = await fetch(proxyUrl);
+          const blob = await res.blob();
+          
+          const file = new File([blob], u.fileName, { type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+          list.push({
+            id: `${file.name}-${index}-${now}`,
+            file: file,
+            gameId: u.gameName || "", 
+            drawDate: businessDate,
+            draw: formatDateToDDMMYYYY(businessDate),
+            trimDigits: 2, // default for returns
+            autoDetectedGameId: null,
+            autoDetectNote: null,
+            autoDetectStatus: "not_found",
+            v1Id: null,
+            strictMatchGameDraw: false,
+          });
+          index++;
+        } catch (err) {
+          console.error(`Failed to load ${u.fileName}`, err);
+        }
+      }
+
+      const finalList = applyAutoDetection(businessDate, list);
+      setFileConfigs(finalList);
+      setPreviewTable([]);
+      setPreviewLabel("");
+      setStructuredReturns([]);
+      setDownloadBlob(null);
+    } catch (err) {
+      console.error("Error loading files:", err);
+      alert("Failed to load files into the processor.");
+    } finally {
+      setIsLoadingAllIntoProcessor(false);
+    }
+  }
+
+  // ------------- Load Individual Upload into Processor -------------
+  async function handleLoadIndividualIntoProcessor(u: ReturnUploadedFileRecord) {
+    if (!u.downloadUrl) return;
+    setIsLoadingAllIntoProcessor(true);
+    setError(null);
+    try {
+      const now = Date.now();
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
+      const res = await fetch(proxyUrl);
+      const blob = await res.blob();
+      
+      const file = new File([blob], u.fileName, { type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+      const newConfig: ReturnFileConfig = {
+        id: `${file.name}-1-${now}`,
+        file: file,
+        gameId: u.gameName || "", 
+        drawDate: businessDate,
+        draw: formatDateToDDMMYYYY(businessDate),
+        trimDigits: 2,
+        autoDetectedGameId: null,
+        autoDetectNote: null,
+        autoDetectStatus: "not_found",
+        v1Id: null,
+        strictMatchGameDraw: false,
+      };
+
+      const newList = [...fileConfigs, newConfig];
+      const updatedList = applyAutoDetection(businessDate, newList);
+      setFileConfigs(updatedList);
+    } catch (err) {
+      console.error(`Failed to load ${u.fileName}`, err);
+      alert(`Failed to load ${u.fileName} into the processor.`);
+    } finally {
+      setIsLoadingAllIntoProcessor(false);
+    }
+  }
+
   // ✅ Upload multiple V1 files into a library
   async function handleV1LibraryChange(e: ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
@@ -544,16 +635,27 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
     }
   }
 
-  function handleDownload() {
+  async function handleDownload() {
     if (!downloadBlob) return;
-    const url = window.URL.createObjectURL(downloadBlob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+    
+    try {
+      const res = await fetch('/api/save-local', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+        },
+        body: downloadBlob,
+      });
+      
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Failed to save file');
+      
+      alert(result.message || 'File saved successfully to C:\\DLB\\1.xlsx');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error passing file to local save API';
+      alert('Error saving file: ' + msg);
+      console.error(err);
+    }
   }
 
   const totalQty = structuredReturns.reduce((sum, r) => sum + (r.Qty || 0), 0);
@@ -609,7 +711,19 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
               <span className="text-xs font-medium text-gray-800">
                 Uploaded return files for {businessDate}
               </span>
-              {uploadsLoading && <span className="text-[11px] text-gray-500">Loading…</span>}
+              <div className="flex items-center gap-2">
+                {uploadsLoading && <span className="text-[11px] text-gray-500">Loading…</span>}
+                {uploads.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleLoadAllIntoProcessor}
+                    disabled={isLoadingAllIntoProcessor}
+                    className="px-2 py-1 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 text-[11px] font-medium hover:bg-indigo-100 disabled:opacity-60"
+                  >
+                    {isLoadingAllIntoProcessor ? "Loading..." : "Load to Processor"}
+                  </button>
+                )}
+              </div>
             </div>
 
             {uploadsError && <p className="text-[11px] text-red-600 mb-1">{uploadsError}</p>}
@@ -636,6 +750,13 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
                         <td className="px-2 py-1 whitespace-nowrap">{u.gameName || "-"}</td>
                         <td className="px-2 py-1 text-right">{Math.round((u.size || 0) / 1024)}</td>
                         <td className="px-2 py-1 text-center">
+                          <button
+                            type="button"
+                            onClick={() => void handleLoadIndividualIntoProcessor(u)}
+                            className="text-indigo-600 font-medium hover:underline mr-2 text-[11px]"
+                          >
+                            Load
+                          </button>
                           <a
                             href={u.downloadUrl}
                             target="_blank"
