@@ -795,24 +795,42 @@ export default function HomePage() {
   async function handleDownload() {
     if (!downloadBlob) return;
     
-    try {
-      const res = await fetch('/api/save-local', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-        },
-        body: downloadBlob,
-      });
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
-      const data = await res.json();
-      if (data.success) {
-        alert(data.message);
-      } else {
-        alert(`Failed to save locally: ${data.error}`);
+    if (isLocal) {
+      try {
+        const res = await fetch('/api/save-local', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+          },
+          body: downloadBlob,
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          alert(data.message);
+          return;
+        } else {
+          console.warn(`Local save failed: ${data.error}. Falling back to browser download.`);
+        }
+      } catch (err: any) {
+        console.warn("Local save error:", err, "Falling back to browser download.");
       }
+    }
+
+    // Fallback to standard browser download
+    try {
+      const url = window.URL.createObjectURL(downloadBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "1.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
     } catch (err: any) {
-      console.error("Local save error:", err);
-      alert(`Error saving file locally: ${err.message}`);
+      alert(`Error saving file: ${err.message}`);
     }
   }
 
