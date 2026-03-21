@@ -147,13 +147,21 @@ function detectDealerOverlaps(rows: StructuredRowInternal[]): string[] {
 }
 
 // Simple validation: check blocks that have partial data or FROM>TO
-function recalcValidationBlocks(blocks: AvailabilityBlock[]): string | null {
+function recalcValidationBlocks(blocks: AvailabilityBlock[], trimDigits: number): string | null {
+  if (trimDigits !== 1 && trimDigits !== 2) {
+    return "Trim (ඉවත් කරන අංක ගණන) අගය 1 හෝ 2 පමණක් විය යුතුය. (Trim value must be 1 or 2)";
+  }
+
+  if (blocks.length === 0) {
+    return "අවම වශයෙන් එක් පරාසයක් (Sales Range) හෝ තිබිය යුතුය. (At least one range is required)";
+  }
+
   for (const b of blocks) {
     const hasFrom = !!b.from.trim();
     const hasTo = !!b.to.trim();
 
-    if (hasFrom !== hasTo) {
-      return `Block with FROM "${b.from}" and TO "${b.to}" is incomplete. Both are required or leave both empty.`;
+    if (!hasFrom || !hasTo) {
+      return `කරුණාකර FROM සහ TO අගයන් දෙකම ඇතුළත් කරන්න. ඒවා හිස්ව තැබිය නොහැක. (FROM and TO cannot be empty)`;
     }
 
     if (hasFrom && hasTo) {
@@ -161,10 +169,10 @@ function recalcValidationBlocks(blocks: AvailabilityBlock[]): string | null {
       const toNum = toNumber(b.to as Cell);
 
       if (fromNum === null || toNum === null) {
-        return `Block "${b.from}–${b.to}" must be numeric barcodes.`;
+        return `FROM සහ TO අගයන් අංක පමණක් විය යුතුය. (Must be numeric barcodes)`;
       }
       if (fromNum > toNum) {
-        return `Block "${b.from}–${b.to}" has FROM greater than TO.`;
+        return `FROM අගය TO අගයට වඩා කුඩා විය යුතුය. (FROM > TO is invalid)`;
       }
     }
   }
@@ -210,6 +218,10 @@ export default function HomePage() {
   const [isDownloadingAll, setIsDownloadingAll] = useState(false);
   const [isLoadingAllIntoProcessor, setIsLoadingAllIntoProcessor] = useState(false);
   const [autoOpenWebsite, setAutoOpenWebsite] = useState(true);
+  const [showPostUploadActionModal, setShowPostUploadActionModal] = useState(false);
+  const [showRobotInstructionsModal, setShowRobotInstructionsModal] = useState(false);
+  const [showInitialWelcomeModal, setShowInitialWelcomeModal] = useState(true);
+  const [showDeleteOldFilesModal, setShowDeleteOldFilesModal] = useState(false);
 
   // ------------- Open DLB website -------------
   function openDLBWebsite() {
@@ -239,7 +251,7 @@ export default function HomePage() {
       prev.map((cfg) => {
         if (cfg.id !== cfgId) return cfg;
         const updated = updater(cfg);
-        const warning = recalcValidationBlocks(updated.blocks);
+        const warning = recalcValidationBlocks(updated.blocks, updated.trimDigits);
         return { ...updated, validationWarning: warning };
       })
     );
@@ -359,7 +371,7 @@ export default function HomePage() {
         gameId: "",
         drawDate: selectedDate,
 
-        trimDigits: 0, // default
+        trimDigits: 2, // default
 
         autoDetectedGameId: null,
         autoDetectNote: null,
@@ -376,8 +388,7 @@ export default function HomePage() {
 
     setFileConfigs(applyAutoDetection(selectedDate, list));
     if (list.length > 0) {
-      setCurrentConfigIndex(0);
-      openDLBWebsite();
+      setShowPostUploadActionModal(true);
     }
     setPreviewTable([]);
     setPreviewLabel("");
@@ -460,7 +471,7 @@ export default function HomePage() {
   }
 
   // ------------- Save All Files to Firebase -------------
-  async function handleSaveAll() {
+  async function handleSaveAll(shouldDeleteOld: boolean = false) {
     if (!selectedDate) {
       setError("Please pick a business date at the top before saving files.");
       return;
@@ -479,11 +490,22 @@ export default function HomePage() {
     setError(null);
 
     try {
+      if (shouldDeleteOld) {
+        for (const u of uploads) {
+          try {
+            await deleteUploadedFile(u);
+          } catch (e) {
+            console.error("Failed to delete old file:", e);
+          }
+        }
+      }
+
       for (const cfg of validConfigs) {
         setSavingFileId(cfg.id);
         await saveUploadedFile(cfg.file, cfg.gameId, cfg.gameId, selectedDate);
       }
       await loadUploads(selectedDate);
+      setShowRobotInstructionsModal(true);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error saving files to Firebase.";
       setError(`Error during Save All: ${msg}`);
@@ -557,7 +579,7 @@ export default function HomePage() {
             file: file,
             gameId: u.gameId || "", 
             drawDate: selectedDate,
-            trimDigits: 0,
+            trimDigits: 2,
             autoDetectedGameId: null,
             autoDetectNote: null,
             autoDetectStatus: "not_found",
@@ -610,7 +632,7 @@ export default function HomePage() {
         file: file,
         gameId: u.gameId || "", 
         drawDate: selectedDate,
-        trimDigits: 0,
+        trimDigits: 2,
         autoDetectedGameId: null,
         autoDetectNote: null,
         autoDetectStatus: "not_found",
@@ -782,7 +804,7 @@ export default function HomePage() {
         );
       }
 
-      setFileName("AllGames_structured.xlsx");
+      setFileName("1.xlsx");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error while processing the files.";
       setError(msg);
@@ -795,36 +817,32 @@ export default function HomePage() {
   async function handleDownload() {
     if (!downloadBlob) return;
     
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-
-    if (isLocal) {
+    // Modern Browser Save Prompt (Allows user to select location)
+    if ('showSaveFilePicker' in window) {
       try {
-        const res = await fetch('/api/save-local', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/octet-stream',
-          },
-          body: downloadBlob,
+        const handle = await (window as any).showSaveFilePicker({
+          suggestedName: fileName || "1.xlsx",
+          types: [{
+            description: 'Excel File',
+            accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] },
+          }],
         });
-
-        const data = await res.json();
-        if (data.success) {
-          alert(data.message);
-          return;
-        } else {
-          console.warn(`Local save failed: ${data.error}. Falling back to browser download.`);
-        }
+        const writable = await handle.createWritable();
+        await writable.write(downloadBlob);
+        await writable.close();
+        alert("ෆයිල් එක ඔබ ලබාදුන් ස්ථානයේ සාර්ථකව සේව් විය. හොඳ ළමයෙක්! (File successfully saved to your chosen location!)");
+        return;
       } catch (err: any) {
-        console.warn("Local save error:", err, "Falling back to browser download.");
+        if (err.name === 'AbortError') return; // User cancelled
       }
     }
 
-    // Fallback to standard browser download
+    // Fallback to standard browser download prompt
     try {
       const url = window.URL.createObjectURL(downloadBlob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "1.xlsx";
+      a.download = fileName || "1.xlsx";
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -1012,38 +1030,18 @@ export default function HomePage() {
         </section>
 
         {/* Upload + per-file config */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form id="upload-section" onSubmit={handleSubmit} className="space-y-4">
           <div className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-4">
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <div>
-                  <label className="block text-sm" htmlFor="file">
-                    Upload ERP Summary files (.xls or .xlsx)
-                  </label>
-                  <div className="mt-1 flex items-center gap-2">
-                    <input
-                      id="auto-dlb"
-                      type="checkbox"
-                      checked={autoOpenWebsite}
-                      onChange={(e) => setAutoOpenWebsite(e.target.checked)}
-                      className="h-3 w-3"
-                    />
-                    <label htmlFor="auto-dlb" className="text-[11px] text-gray-700">
-                      Auto-open DLB Website (https://online.dlb.lk/DealerOrder/Create) alongside config modal
-                    </label>
-                  </div>
-                </div>
-                {fileConfigs.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleSaveAll}
-                    disabled={isSavingAll}
-                    className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded shadow disabled:opacity-60"
-                  >
-                    {isSavingAll ? "Saving All..." : "Save All to Firebase"}
-                  </button>
-                )}
-              </div>
+            <div className="flex flex-col items-center justify-center bg-white p-8 rounded-xl border-2 border-dashed border-gray-400 shadow-sm relative w-full">
+              <label
+                htmlFor="file"
+                className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold py-6 px-10 rounded-xl shadow-lg hover:shadow-xl text-xl transition-all text-center mb-4 block w-1/2"
+              >
+                Upload ERP Summary files (.xls or .xlsx)
+              </label>
+              <p className="text-gray-700 font-semibold text-lg text-center mb-6">
+                පළමුව සේව් කිරීම සඳහා සේල්ස් ෆයිල් (Sales file) මෙහි ඇතුළත් කරන්න
+              </p>
               <input
                 id="file"
                 name="file"
@@ -1051,12 +1049,23 @@ export default function HomePage() {
                 accept=".xls,.xlsx"
                 multiple
                 onChange={handleFileChange}
-                className="w-full text-sm"
+                className="hidden"
               />
-              <p className="mt-1 text-[11px] text-gray-500">
-                Select multiple files (each file = one game). Game will auto-detect from file name and selected business date.
-              </p>
+              <div className="flex items-center justify-center gap-2">
+                <input
+                  id="auto-dlb"
+                  type="checkbox"
+                  checked={autoOpenWebsite}
+                  onChange={(e) => setAutoOpenWebsite(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                <label htmlFor="auto-dlb" className="text-sm text-gray-700">
+                  Auto-open DLB Website alongside config modal
+                </label>
+              </div>
             </div>
+
+            {/* Post-upload options are now a modal overlay */}
 
             {fileConfigs.length > 0 && (
               <div className="space-y-3">
@@ -1281,12 +1290,12 @@ export default function HomePage() {
                           </label>
                           <input
                             type="number"
-                            min={0}
-                            max={10}
+                            min={1}
+                            max={2}
                             value={cfg.trimDigits}
                             onChange={(e) => {
-                              const raw = Number(e.target.value || 0);
-                              const v = Math.max(0, Math.min(10, Number.isFinite(raw) ? raw : 0));
+                              const raw = Number(e.target.value || 2);
+                              const v = Math.max(1, Math.min(2, Number.isFinite(raw) ? raw : 2));
                               updateFileConfig(cfg.id, (old) => ({
                                 ...old,
                                 trimDigits: Math.trunc(v),
@@ -1499,6 +1508,178 @@ export default function HomePage() {
                   className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-medium shadow"
                 >
                   {currentConfigIndex + 1 < fileConfigs.length ? "Confirm & Next File" : "Confirm & Finish"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal for Post-Upload Action Selection */}
+        {showPostUploadActionModal && (
+          <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-[60] p-6">
+            <h2 className="text-4xl font-bold text-white mb-2 text-center">
+              Files loaded. What's next?
+            </h2>
+            <h3 className="text-3xl font-bold mb-10 text-white text-center">
+              ෆයිල් එක ලෝඩ් විය. ඊළඟට කුමක් කළ යුතුද?
+            </h3>
+            
+            <div className="flex flex-col md:flex-row items-stretch justify-center gap-10 w-full max-w-4xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPostUploadActionModal(false);
+                  if (uploads.length > 0) {
+                    setShowDeleteOldFilesModal(true);
+                  } else {
+                    handleSaveAll(false);
+                  }
+                }}
+                disabled={isSavingAll}
+                className="w-full md:w-1/2 flex flex-col items-center justify-center py-12 px-6 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white rounded-3xl transition-transform transform hover:scale-105 border-4 border-green-900 shadow-xl"
+              >
+                <span className="text-3xl font-bold mb-4">
+                  {isSavingAll ? "Saving All..." : "Save All to Firebase"}
+                </span>
+                <span className="text-2xl font-bold">සියල්ල සේව් කරන්න</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPostUploadActionModal(false);
+                  setCurrentConfigIndex(0);
+                  openDLBWebsite();
+                }}
+                className="w-full md:w-1/2 flex flex-col items-center justify-center py-12 px-6 bg-blue-700 hover:bg-blue-600 text-white rounded-3xl transition-transform transform hover:scale-105 border-4 border-blue-900 shadow-xl"
+              >
+                <span className="text-3xl font-bold mb-4">Input sales ranges</span>
+                <span className="text-2xl font-bold">රොබෝට සේල්ස් රේන්ජ් දෙන්න</span>
+              </button>
+            </div>
+            
+            <button 
+              onClick={() => setShowPostUploadActionModal(false)}
+              className="mt-14 text-white underline text-lg font-bold p-3 hover:bg-slate-800 rounded"
+            >
+              Dismiss Options
+            </button>
+          </div>
+        )}
+
+        {/* Modal for Robot Instructions after Save All */}
+        {showRobotInstructionsModal && (
+          <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-[70] p-6">
+            <div className="bg-red-700 text-white p-12 rounded-3xl border-8 border-red-900 max-w-4xl text-center shadow-2xl">
+              <h2 className="text-5xl font-bold mb-6">
+                Please go to the Robot computer!
+              </h2>
+              <h3 className="text-4xl font-bold mb-10 leading-snug">
+                දැන් කරුණාකර රොබෝව ඇති පරිගණකය වෙත යන්න.<br/>
+                කරුණාකර අලෝකට (Aloka) කතා කර බාධා නොකරන්න.
+              </h3>
+              <button 
+                onClick={() => setShowRobotInstructionsModal(false)}
+                className="mt-6 px-12 py-5 bg-white text-red-800 text-3xl font-bold rounded-xl hover:bg-gray-200 transition-colors shadow-lg"
+              >
+                හරි (OK)
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Modal for Initial PC Load / Welcome Screen */}
+        {showInitialWelcomeModal && (
+          <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-[80] p-6">
+            <h2 className="text-4xl font-bold text-white mb-2 text-center">
+              Welcome / ආයුබෝවන් 
+            </h2>
+            <h3 className="text-3xl font-bold mb-10 text-white text-center">
+              What do you want to do today? / අද ඔබට කුමක් කිරීමට අවශ්‍යද?
+            </h3>
+            
+            <div className="flex flex-col md:flex-row items-stretch justify-center gap-10 w-full max-w-4xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowInitialWelcomeModal(false);
+                  setTimeout(() => {
+                    document.getElementById('upload-section')?.scrollIntoView({ behavior: 'smooth' });
+                  }, 50);
+                }}
+                className="w-full md:w-1/2 flex flex-col items-center justify-center py-12 px-6 bg-blue-700 hover:bg-blue-600 text-white rounded-3xl transition-transform transform hover:scale-105 border-4 border-blue-900 shadow-xl"
+              >
+                <span className="text-3xl font-bold mb-4">Upload sales file</span>
+                <span className="text-2xl font-bold">සේල්ස් ෆයිල් අප්ලෝඩ් කරන්න</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowInitialWelcomeModal(false);
+                  openDLBWebsite();
+                  if (uploads.length > 0) {
+                    handleLoadAllIntoProcessor();
+                  }
+                }}
+                className="w-full md:w-1/2 flex flex-col items-center justify-center py-12 px-6 bg-indigo-700 hover:bg-indigo-600 text-white rounded-3xl transition-transform transform hover:scale-105 border-4 border-indigo-900 shadow-xl"
+              >
+                <span className="text-3xl font-bold mb-4">Add sales ranges to robot</span>
+                <span className="text-2xl font-bold">රොබෝට සේල්ස් රේන්ජ් ලබා දෙන්න</span>
+              </button>
+            </div>
+            
+            <button 
+              onClick={() => setShowInitialWelcomeModal(false)}
+              className="mt-14 text-white underline text-lg font-bold p-3 hover:bg-slate-800 rounded"
+            >
+              Close this window
+            </button>
+          </div>
+        )}
+
+        {/* Modal for Deleting Old Files Confirmation */}
+        {showDeleteOldFilesModal && (
+          <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-[75] p-6">
+            <div className="bg-amber-500 text-slate-900 p-12 rounded-3xl border-8 border-amber-600 max-w-4xl text-center shadow-2xl">
+              <h2 className="text-5xl font-bold mb-6">
+                Remove old files?
+              </h2>
+              <h3 className="text-4xl font-bold mb-10 leading-snug">
+                ඔබට මෙම දිනයට අදාළ පැරණි ෆයිල් මකා දැමීමට අවශ්‍යද?<br/>
+                (Do you want to remove the old files for this date?)
+              </h3>
+
+              <div className="flex flex-col md:flex-row gap-6 justify-center">
+                <button 
+                  onClick={() => {
+                    setShowDeleteOldFilesModal(false);
+                    handleSaveAll(true);
+                  }}
+                  className="px-8 py-6 bg-red-700 text-white text-3xl font-bold rounded-2xl hover:bg-red-600 transition-colors shadow-lg"
+                >
+                  ඔව්, මකා සේව් කරන්න<br/>
+                  <span className="text-2xl font-medium">(Yes, Remove)</span>
+                </button>
+
+                <button 
+                  onClick={() => {
+                    setShowDeleteOldFilesModal(false);
+                    handleSaveAll(false);
+                  }}
+                  className="px-8 py-6 bg-blue-700 text-white text-3xl font-bold rounded-2xl hover:bg-blue-600 transition-colors shadow-lg"
+                >
+                  නැත, මකන්න එපා<br/>
+                  <span className="text-2xl font-medium">(No, Keep them)</span>
+                </button>
+              </div>
+
+              <div className="mt-12">
+                <button 
+                  onClick={() => setShowDeleteOldFilesModal(false)}
+                  className="text-slate-800 underline text-2xl font-bold hover:text-slate-900 transition-colors"
+                >
+                  Cancel / අවලංගු කරන්න
                 </button>
               </div>
             </div>
