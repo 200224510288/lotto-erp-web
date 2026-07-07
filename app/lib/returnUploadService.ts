@@ -122,3 +122,49 @@ export async function deleteReturnUploadedFile(
 
   await deleteDoc(doc(db, COLLECTION, record.id));
 }
+
+/**
+ * List all Return uploaded files for a given business date range.
+ */
+export async function listReturnUploadedFilesByDateRange(
+  startDate: string,
+  endDate: string
+): Promise<ReturnUploadedFileRecord[]> {
+  if (!startDate || !endDate) return [];
+
+  const q = query(
+    collection(db, COLLECTION),
+    where("uploadDate", ">=", startDate),
+    where("uploadDate", "<=", endDate)
+  );
+
+  const snap = await getDocs(q);
+
+  const result: ReturnUploadedFileRecord[] = [];
+  snap.forEach((docSnap) => {
+    const data = docSnap.data() as Partial<ReturnUploadedFileRecord>;
+    result.push({
+      id: docSnap.id,
+      fileName: data.fileName ?? "",
+      gameId: data.gameId ?? "",
+      gameName: data.gameName ?? "",
+      uploadDate: data.uploadDate ?? "",
+      downloadUrl: data.downloadUrl ?? "",
+      size: data.size ?? 0,
+      storagePath: data.storagePath ?? "",
+      createdAt: data.createdAt,
+    });
+  });
+
+  // Sort in memory to avoid index requirements
+  result.sort((a, b) => {
+    if (a.uploadDate !== b.uploadDate) {
+      return a.uploadDate.localeCompare(b.uploadDate);
+    }
+    const tA = a.createdAt?.toMillis() ?? 0;
+    const tB = b.createdAt?.toMillis() ?? 0;
+    return tA - tB;
+  });
+
+  return result;
+}

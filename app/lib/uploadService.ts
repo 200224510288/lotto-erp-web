@@ -125,3 +125,49 @@ export async function deleteUploadedFile(
 
   await deleteDoc(doc(db, COLLECTION, record.id));
 }
+
+/**
+ * List all uploaded files for a given business date range.
+ */
+export async function listUploadedFilesByDateRange(
+  startDate: string,
+  endDate: string
+): Promise<UploadedFileRecord[]> {
+  if (!startDate || !endDate) return [];
+
+  const q = query(
+    collection(db, COLLECTION),
+    where("uploadDate", ">=", startDate),
+    where("uploadDate", "<=", endDate)
+  );
+
+  const snap = await getDocs(q);
+
+  const result: UploadedFileRecord[] = [];
+  snap.forEach((docSnap) => {
+    const data = docSnap.data() as UploadedFileRecord;
+    result.push({
+      id: docSnap.id,
+      fileName: data.fileName ?? "",
+      gameId: data.gameId ?? "",
+      gameName: data.gameName ?? "",
+      uploadDate: data.uploadDate ?? "",
+      downloadUrl: data.downloadUrl ?? "",
+      size: data.size ?? 0,
+      storagePath: data.storagePath ?? "",
+      createdAt: data.createdAt,
+    });
+  });
+
+  // Sort in memory to avoid index requirements
+  result.sort((a, b) => {
+    if (a.uploadDate !== b.uploadDate) {
+      return a.uploadDate.localeCompare(b.uploadDate);
+    }
+    const tA = a.createdAt?.toMillis() ?? 0;
+    const tB = b.createdAt?.toMillis() ?? 0;
+    return tA - tB;
+  });
+
+  return result;
+}

@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { listUploadedFilesByDate, listUploadedFilesByDateRange, UploadedFileRecord } from "../lib/uploadService";
+import { listReturnUploadedFilesByDate, listReturnUploadedFilesByDateRange, ReturnUploadedFileRecord } from "../lib/returnUploadService";
 
 /**
  * Allowed lottery types per weekday (ERP codes are treated as lottery types)
@@ -41,6 +43,16 @@ type TypeResult = {
     totalReturnQty: number;
     overallReturnPct: number; // totalReturn/totalSales*100
   };
+};
+
+type AgentResultRow = {
+  rank: number;
+  agentCode: string;
+  agentName?: string;
+  salesQty: number;
+  returnQty: number;
+  actualSales: number;
+  returnPct: number;
 };
 
 function normalizeAgentCode(raw: unknown): string {
@@ -213,45 +225,95 @@ function makeUniqueSheetName(base: string, used: Set<string>) {
   }
 }
 
-function downloadAllAsExcel(filename: string, meta: { date: string; day: string }, typeResults: TypeResult[]) {
-  const wb = XLSX.utils.book_new();
-  const used = new Set<string>();
+function formatDateYYYYMMDD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
-  for (const tr of typeResults) {
-    const headerMeta = [
-      ["Date", meta.date],
-      ["Day", meta.day],
-      ["LotteryType", tr.lotteryType],
-      ["UniqueAgents", tr.totals.uniqueAgents],
-      ["TotalSalesQty", tr.totals.totalSalesQty],
-      ["TotalReturnQty", tr.totals.totalReturnQty],
-      ["OverallReturnPct", Number(tr.totals.overallReturnPct.toFixed(2))],
-      [],
-    ];
+function getWeekRange(dateStr: string): { start: string; end: string } {
+  if (!dateStr) return { start: "", end: "" };
+  const parts = dateStr.split("-").map(Number);
+  const d = new Date(parts[0], parts[1] - 1, parts[2]);
+  const day = d.getDay(); // 0 is Sunday, 1 is Monday, etc.
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diffToMonday);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return {
+    start: formatDateYYYYMMDD(monday),
+    end: formatDateYYYYMMDD(sunday),
+  };
+}
 
-    const exportRows = tr.top.map((r) => ({
-      Rank: r.rank,
-      AgentCode: r.agentCode,
-      AgentName: r.agentName ?? "",
-      LotteryType: r.lotteryType,
-      SalesQty: r.salesQty,
-      ReturnQty: r.returnQty,
-      ActualSales: r.actualSales,
-      ReturnPct: Number(r.returnPct.toFixed(2)),
-    }));
+function getMonthRange(dateStr: string): { start: string; end: string } {
+  if (!dateStr) return { start: "", end: "" };
+  const parts = dateStr.split("-").map(Number);
+  const year = parts[0];
+  const monthIdx = parts[1] - 1; // 0-indexed
+  const firstDay = new Date(year, monthIdx, 1);
+  const lastDay = new Date(year, monthIdx + 1, 0);
+  return {
+    start: formatDateYYYYMMDD(firstDay),
+    end: formatDateYYYYMMDD(lastDay),
+  };
+}
 
-    const ws = XLSX.utils.aoa_to_sheet(headerMeta);
-    XLSX.utils.sheet_add_json(ws, exportRows, { origin: "A9" });
-
-    const sheetName = makeUniqueSheetName(tr.lotteryType, used);
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+function downloadAllAsExcel(
+  filename: string,
+  meta: { date: string; mode: string; dateRange: string },
+  rows: AgentResultRow[],
+  totals: {
+    uniqueAgents: number;
+    totalSalesQty: number;
+    totalReturnQty: number;
+    overallReturnPct: number;
   }
+) {
+  const wb = XLSX.utils.book_new();
 
+  const headerMeta = [
+    ["Report Mode", meta.mode.toUpperCase()],
+    ["Base Date", meta.date],
+    ["Date Range", meta.dateRange],
+    ["Unique Agents", totals.uniqueAgents],
+    ["Total Sales Qty", totals.totalSalesQty],
+    ["Total Return Qty", totals.totalReturnQty],
+    ["Overall Return %", Number(totals.overallReturnPct.toFixed(2))],
+    [],
+  ];
+
+  const exportRows = rows.map((r) => ({
+    Rank: r.rank,
+    AgentCode: r.agentCode,
+    AgentName: r.agentName ?? "",
+    SalesQty: r.salesQty,
+    ReturnQty: r.returnQty,
+    ActualSales: r.actualSales,
+    ReturnPct: Number(r.returnPct.toFixed(2)),
+  }));
+
+  const ws = XLSX.utils.aoa_to_sheet(headerMeta);
+  XLSX.utils.sheet_add_json(ws, exportRows, { origin: "A9" });
+
+  XLSX.utils.book_append_sheet(wb, ws, "Agent Returns Summary");
   XLSX.writeFile(wb, filename);
 }
 
 /** ---------- PDF EXPORT (professional report) ---------- */
-function downloadAllAsPdf(filename: string, meta: { date: string; day: string }, typeResults: TypeResult[]) {
+function downloadAllAsPdf(
+  filename: string,
+  meta: { date: string; mode: string; dateRange: string },
+  rows: AgentResultRow[],
+  totals: {
+    uniqueAgents: number;
+    totalSalesQty: number;
+    totalReturnQty: number;
+    overallReturnPct: number;
+  }
+) {
   const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
 
   const marginX = 14;
@@ -265,14 +327,10 @@ function downloadAllAsPdf(filename: string, meta: { date: string; day: string },
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.text(`Date: ${meta.date}    Day: ${meta.day}`, marginX, y);
+  doc.text(`Report Mode: ${meta.mode.toUpperCase()}    Range: ${meta.dateRange}`, marginX, y);
   y += 8;
 
   // Overall summary
-  const overallSales = typeResults.reduce((s, t) => s + t.totals.totalSalesQty, 0);
-  const overallReturns = typeResults.reduce((s, t) => s + t.totals.totalReturnQty, 0);
-  const overallPct = overallSales > 0 ? (overallReturns / overallSales) * 100 : 0;
-
   doc.setDrawColor(220);
   doc.setFillColor(245, 246, 248);
   doc.roundedRect(marginX, y, 182, 18, 3, 3, "F");
@@ -282,58 +340,42 @@ function downloadAllAsPdf(filename: string, meta: { date: string; day: string },
   doc.text("Overall Summary", marginX + 4, y + 6);
 
   doc.setFont("helvetica", "normal");
-  doc.text(`Total Sales Qty: ${overallSales}`, marginX + 4, y + 12);
-  doc.text(`Total Return Qty: ${overallReturns}`, marginX + 70, y + 12);
-  doc.text(`Overall Return %: ${overallPct.toFixed(2)}%`, marginX + 140, y + 12);
+  doc.text(`Total Sales Qty: ${totals.totalSalesQty}`, marginX + 4, y + 12);
+  doc.text(`Total Return Qty: ${totals.totalReturnQty}`, marginX + 70, y + 12);
+  doc.text(`Overall Return %: ${totals.overallReturnPct.toFixed(2)}%`, marginX + 140, y + 12);
   y += 26;
 
-  // Sections per lottery type
-  for (const tr of typeResults) {
-    if (y > 250) {
-      doc.addPage();
-      y = 18;
-    }
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.text(`Lottery Type: ${tr.lotteryType}`, marginX, y);
-    y += 6;
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.text(
-      `Agents: ${tr.totals.uniqueAgents}   SalesQty: ${tr.totals.totalSalesQty}   ReturnQty: ${tr.totals.totalReturnQty}   Overall Return%: ${tr.totals.overallReturnPct.toFixed(2)}%`,
-      marginX,
-      y
-    );
-    y += 4;
-
-    autoTable(doc, {
-      startY: y + 4,
-      head: [["Rank", "Agent Code", "Agent Name", "Sales Qty", "Return Qty", "Actual Sales", "Return %"]],
-      body: tr.top.map((r) => [
-        r.rank,
-        r.agentCode,
-        r.agentName ?? "",
-        r.salesQty,
-        r.returnQty,
-        r.actualSales,
-        `${r.returnPct.toFixed(2)}%`,
-      ]),
-      styles: { font: "helvetica", fontSize: 9, cellPadding: 2, overflow: "linebreak" },
-      headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: "bold" }, // slate-like
-      alternateRowStyles: { fillColor: [245, 246, 248] },
-      margin: { left: marginX, right: marginX },
-    });
-
-    y = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 12;
-  }
+  autoTable(doc, {
+    startY: y,
+    head: [["Rank", "Agent Code", "Agent Name", "Sales Qty", "Return Qty", "Actual Sales", "Return %"]],
+    body: rows.map((r) => [
+      r.rank,
+      r.agentCode,
+      r.agentName ?? "",
+      r.salesQty,
+      r.returnQty,
+      r.actualSales,
+      `${r.returnPct.toFixed(2)}%`,
+    ]),
+    styles: { font: "helvetica", fontSize: 9, cellPadding: 2, overflow: "linebreak" },
+    headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: "bold" }, // slate-like
+    alternateRowStyles: { fillColor: [245, 246, 248] },
+    margin: { left: marginX, right: marginX },
+  });
 
   doc.save(filename);
 }
 
+function todayKey(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 export default function ReturnAnalysisPage() {
-  const [selectedDate, setSelectedDate] = useState<string>("");
+  const [selectedDate, setSelectedDate] = useState<string>(todayKey());
 
   // MULTI UPLOAD
   const [salesFiles, setSalesFiles] = useState<File[]>([]);
@@ -343,130 +385,193 @@ export default function ReturnAnalysisPage() {
   const [downloadFormat, setDownloadFormat] = useState<"excel" | "pdf">("excel");
 
   // Parsed/grouped results
-  const [typeResults, setTypeResults] = useState<TypeResult[]>([]);
+  const [allAgentResults, setAllAgentResults] = useState<AgentResultRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+
+  // DB files states
+  const [dbErpFiles, setDbErpFiles] = useState<UploadedFileRecord[]>([]);
+  const [dbReturnFiles, setDbReturnFiles] = useState<ReturnUploadedFileRecord[]>([]);
+  const [isLoadingDbFiles, setIsLoadingDbFiles] = useState(false);
+  const [isFetchingSaved, setIsFetchingSaved] = useState(false);
+
+  // User filter & exclusion states
+  const [reportMode, setReportMode] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [returnThreshold, setReturnThreshold] = useState<number>(5);
+  const [showOnlyExceeded, setShowOnlyExceeded] = useState<boolean>(false);
+  const [excludedAgents, setExcludedAgents] = useState<Set<string>>(new Set());
 
   const weekday = useMemo(() => getWeekdayLabel(selectedDate), [selectedDate]);
   const allowedTypes = useMemo(() => allowedLotteryTypesForDay(weekday), [weekday]);
 
   function resetComputed() {
-    setTypeResults([]);
+    setAllAgentResults([]);
+    setExcludedAgents(new Set());
   }
 
-  async function handleRun() {
+  const activeDateRange = useMemo(() => {
+    if (!selectedDate) return { start: "", end: "" };
+    if (reportMode === "daily") {
+      return { start: selectedDate, end: selectedDate };
+    } else if (reportMode === "weekly") {
+      return getWeekRange(selectedDate);
+    } else {
+      return getMonthRange(selectedDate);
+    }
+  }, [selectedDate, reportMode]);
+
+  const filteredResults = useMemo(() => {
+    let list = allAgentResults.filter((r) => !excludedAgents.has(r.agentCode));
+
+    if (showOnlyExceeded) {
+      list = list.filter((r) => r.returnPct >= returnThreshold);
+    }
+
+    list.sort((a, b) => b.returnPct - a.returnPct);
+
+    return list.map((r, idx) => ({
+      ...r,
+      rank: idx + 1,
+    }));
+  }, [allAgentResults, excludedAgents, showOnlyExceeded, returnThreshold]);
+
+  const overallTotals = useMemo(() => {
+    let totalSalesQty = 0;
+    let totalReturnQty = 0;
+
+    for (const r of filteredResults) {
+      totalSalesQty += r.salesQty;
+      totalReturnQty += r.returnQty;
+    }
+
+    const overallReturnPct = totalSalesQty > 0 ? (totalReturnQty / totalSalesQty) * 100 : 0;
+
+    return {
+      uniqueAgents: filteredResults.length,
+      totalSalesQty,
+      totalReturnQty,
+      overallReturnPct,
+    };
+  }, [filteredResults]);
+
+  // Filter saved files so we only include days that have both ERP and Return uploads
+  const { activeErpFiles, activeReturnFiles, activeDates } = useMemo(() => {
+    if (reportMode === "daily") {
+      return {
+        activeErpFiles: dbErpFiles,
+        activeReturnFiles: dbReturnFiles,
+        activeDates: new Set(selectedDate ? [selectedDate] : []),
+      };
+    }
+
+    const erpDates = new Set(dbErpFiles.map((f) => f.uploadDate));
+    const returnDates = new Set(dbReturnFiles.map((f) => f.uploadDate));
+    const intersection = new Set([...erpDates].filter((d) => returnDates.has(d)));
+
+    return {
+      activeErpFiles: dbErpFiles.filter((f) => intersection.has(f.uploadDate)),
+      activeReturnFiles: dbReturnFiles.filter((f) => intersection.has(f.uploadDate)),
+      activeDates: intersection,
+    };
+  }, [dbErpFiles, dbReturnFiles, reportMode, selectedDate]);
+
+  // Fetch files in database for selected date range
+  useEffect(() => {
+    if (!activeDateRange.start || !activeDateRange.end) {
+      setDbErpFiles([]);
+      setDbReturnFiles([]);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoadingDbFiles(true);
+
+    const erpPromise = reportMode === "daily" 
+      ? listUploadedFilesByDate(selectedDate) 
+      : listUploadedFilesByDateRange(activeDateRange.start, activeDateRange.end);
+
+    const retPromise = reportMode === "daily"
+      ? listReturnUploadedFilesByDate(selectedDate)
+      : listReturnUploadedFilesByDateRange(activeDateRange.start, activeDateRange.end);
+
+    Promise.all([erpPromise, retPromise])
+      .then(([erpFiles, retFiles]) => {
+        if (!isMounted) return;
+        setDbErpFiles(erpFiles);
+        setDbReturnFiles(retFiles);
+        setIsLoadingDbFiles(false);
+      })
+      .catch((err) => {
+        if (!isMounted) return;
+        console.error("Error loading DB files:", err);
+        setIsLoadingDbFiles(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedDate, reportMode, activeDateRange]);
+
+  async function runAnalysisForFiles(sFiles: File[], rFiles: File[]) {
     setError(null);
-    resetComputed();
+    setAllAgentResults([]);
 
     if (!selectedDate) return setError("Please select a date first.");
-    if (!weekday) return setError("Invalid date.");
-    if (!allowedTypes.length) return setError(`No lottery types configured for ${weekday}.`);
-
-    if (salesFiles.length === 0) return setError("Please upload at least one Sales file.");
-    // returns can be 0 files (maybe no returns today); still allowed
-
-    // Validate + classify files by type inferred from filename
-    const salesByType = new Map<string, File[]>();
-    const returnByType = new Map<string, File[]>();
-
-    const badNames: string[] = [];
-
-    for (const f of salesFiles) {
-      const t = inferLotteryTypeFromFilename(f.name, allowedTypes);
-      if (!t) badNames.push(`Sales: ${f.name}`);
-      else salesByType.set(t, [...(salesByType.get(t) ?? []), f]);
-    }
-
-    for (const f of returnFiles) {
-      const t = inferLotteryTypeFromFilename(f.name, allowedTypes);
-      if (!t) badNames.push(`Return: ${f.name}`);
-      else returnByType.set(t, [...(returnByType.get(t) ?? []), f]);
-    }
-
-    if (badNames.length) {
-      return setError(
-        `Some files do not contain a valid lottery type for ${weekday}.\n` +
-          `Allowed: ${allowedTypes.join(", ")}\n\n` +
-          `Invalid:\n- ${badNames.join("\n- ")}`
-      );
-    }
-
-    // Enforce: only lottery types that have SALES will be processed
-    const typesToProcess = Array.from(salesByType.keys()).sort();
+    if (sFiles.length === 0) return setError("Please upload at least one Sales file.");
 
     setIsBusy(true);
     try {
-      const finalResults: TypeResult[] = [];
+      const allSalesRows: SaleRow[] = [];
+      const allReturnRows: ReturnRow[] = [];
 
-      for (const lotteryType of typesToProcess) {
-        const sFiles = salesByType.get(lotteryType) ?? [];
-        const rFiles = returnByType.get(lotteryType) ?? [];
+      for (const f of sFiles) {
+        const d = await readSheet2D(f);
+        allSalesRows.push(...parseSales(d));
+      }
 
-        const allSalesRows: SaleRow[] = [];
-        const allReturnRows: ReturnRow[] = [];
+      if (!allSalesRows.length) {
+        throw new Error("No valid sales records parsed from the files.");
+      }
 
-        for (const f of sFiles) {
-          const d = await readSheet2D(f);
-          allSalesRows.push(...parseSales(d));
+      for (const f of rFiles) {
+        const d = await readSheet2D(f);
+        allReturnRows.push(...parseReturns(d));
+      }
+
+      const salesSum = new Map<string, number>();
+      const nameMap = new Map<string, string>();
+      for (const row of allSalesRows) {
+        salesSum.set(row.agentCode, (salesSum.get(row.agentCode) ?? 0) + row.qty);
+        if (row.agentName) {
+          nameMap.set(row.agentCode, row.agentName);
         }
+      }
 
-        if (!allSalesRows.length) continue;
+      const returnSum = new Map<string, number>();
+      for (const row of allReturnRows) {
+        returnSum.set(row.agentCode, (returnSum.get(row.agentCode) ?? 0) + row.qty);
+      }
 
-        for (const f of rFiles) {
-          const d = await readSheet2D(f);
-          allReturnRows.push(...parseReturns(d));
-        }
+      const merged: AgentResultRow[] = [];
+      for (const [agentCode, salesQty] of salesSum.entries()) {
+        if (salesQty <= 0) continue;
+        const returnQty = returnSum.get(agentCode) ?? 0;
+        const returnPct = (returnQty / salesQty) * 100;
 
-        const salesSum = groupSum(allSalesRows);
-        const returnSum = groupSum(allReturnRows);
-        const nameMap = buildNameMap(allSalesRows);
-
-        const merged: Omit<ResultRow, "rank">[] = [];
-        let totalSalesQty = 0;
-        let totalReturnQty = 0;
-
-        for (const [agentCode, salesQty] of salesSum.entries()) {
-          if (salesQty <= 0) continue;
-          const rQty = returnSum.get(agentCode) ?? 0;
-          const returnPct = (rQty / salesQty) * 100;
-
-          totalSalesQty += salesQty;
-          totalReturnQty += rQty;
-
-          merged.push({
-            agentCode,
-            agentName: nameMap.get(agentCode),
-            lotteryType,
-            salesQty,
-            returnQty: rQty,
-            actualSales: salesQty - rQty,
-            returnPct,
-          });
-        }
-
-        merged.sort((a, b) => b.returnPct - a.returnPct);
-        const top = merged.slice(0, 15).map((r, idx) => ({ rank: idx + 1, ...r }));
-
-        const overallReturnPct = totalSalesQty > 0 ? (totalReturnQty / totalSalesQty) * 100 : 0;
-
-        finalResults.push({
-          lotteryType,
-          top,
-          totals: {
-            uniqueAgents: salesSum.size,
-            totalSalesQty,
-            totalReturnQty,
-            overallReturnPct,
-          },
+        merged.push({
+          rank: 0,
+          agentCode,
+          agentName: nameMap.get(agentCode),
+          salesQty,
+          returnQty,
+          actualSales: salesQty - returnQty,
+          returnPct,
         });
       }
 
-      finalResults.sort((a, b) => b.totals.overallReturnPct - a.totals.overallReturnPct);
-      setTypeResults(finalResults);
-
-      if (finalResults.length === 0) {
-        setError("No valid results. Check that your sales files contain the expected summary layout.");
-      }
+      merged.sort((a, b) => b.returnPct - a.returnPct);
+      setAllAgentResults(merged);
+      setExcludedAgents(new Set()); // Reset exclusion on fresh run
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to parse files.");
     } finally {
@@ -474,35 +579,134 @@ export default function ReturnAnalysisPage() {
     }
   }
 
+  async function handleRun() {
+    await runAnalysisForFiles(salesFiles, returnFiles);
+  }
+
+  async function handleLoadSavedAndRun() {
+    setError(null);
+    resetComputed();
+
+    if (!selectedDate) return setError("Please select a date first.");
+    if (activeErpFiles.length === 0) {
+      return setError(`No dates with both ERP and Return files found in the selected range.`);
+    }
+
+    setIsFetchingSaved(true);
+    setIsBusy(true);
+
+    try {
+      const fetchedSales: File[] = [];
+      const fetchedReturns: File[] = [];
+
+      for (const u of activeErpFiles) {
+        if (!u.downloadUrl) continue;
+        const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
+        const res = await fetch(proxyUrl);
+        if (!res.ok) throw new Error(`Failed to fetch saved ERP file: ${u.fileName}`);
+        const blob = await res.blob();
+        const file = new File([blob], u.fileName, {
+          type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        });
+        fetchedSales.push(file);
+      }
+
+      for (const u of activeReturnFiles) {
+        if (!u.downloadUrl) continue;
+        const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
+        const res = await fetch(proxyUrl);
+        if (!res.ok) throw new Error(`Failed to fetch saved Return file: ${u.fileName}`);
+        const blob = await res.blob();
+        const file = new File([blob], u.fileName, {
+          type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        });
+        fetchedReturns.push(file);
+      }
+
+      setSalesFiles(fetchedSales);
+      setReturnFiles(fetchedReturns);
+
+      await runAnalysisForFiles(fetchedSales, fetchedReturns);
+    } catch (err: any) {
+      setError(err?.message || "Error fetching saved files.");
+    } finally {
+      setIsFetchingSaved(false);
+      setIsBusy(false);
+    }
+  }
+
   function handleDownload() {
-    if (!typeResults.length) return;
+    if (!filteredResults.length) return;
+
+    const dateRangeStr =
+      reportMode === "daily"
+        ? selectedDate
+        : `${activeDateRange.start} to ${activeDateRange.end}`;
+
+    const meta = {
+      date: selectedDate,
+      mode: reportMode,
+      dateRange: dateRangeStr,
+    };
 
     if (downloadFormat === "excel") {
-      downloadAllAsExcel(`return_analysis_${selectedDate || "date"}.xlsx`, { date: selectedDate, day: weekday ?? "" }, typeResults);
+      downloadAllAsExcel(
+        `agent_return_analysis_${selectedDate || "date"}.xlsx`,
+        meta,
+        filteredResults,
+        overallTotals
+      );
     } else {
-      downloadAllAsPdf(`return_analysis_${selectedDate || "date"}.pdf`, { date: selectedDate, day: weekday ?? "" }, typeResults);
+      downloadAllAsPdf(
+        `agent_return_analysis_${selectedDate || "date"}.pdf`,
+        meta,
+        filteredResults,
+        overallTotals
+      );
     }
   }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <div className="mx-auto max-w-6xl px-4 py-10">
-        <div className="mb-8">
-          <h1 className="text-2xl font-semibold tracking-tight">Lottery Sales vs Returns Analyzer</h1>
-          <p className="mt-2 text-sm text-slate-600">
-            Select a date → upload multiple Sales + Return files → auto-detect lottery types from filenames → Top 15 per lottery type.
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            Download supports: Excel (multi-sheet) or PDF (professional A4 report).
-          </p>
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Lottery Sales vs Returns Analyzer</h1>
+            <p className="mt-2 text-sm text-slate-600">
+              Consolidated Agent Total Sales & Returns. View Daily, Weekly, or Monthly metrics, set return thresholds, and clean agent lists before exporting.
+            </p>
+          </div>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-3">
           {/* Controls */}
-          <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-            <h2 className="text-base font-semibold">Inputs</h2>
+          <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 self-start">
+            <h2 className="text-base font-semibold">Report Controls</h2>
 
-            <label className="mt-4 block text-sm font-medium text-slate-700">Date</label>
+            {/* Report Mode Selection */}
+            <label className="mt-4 block text-sm font-medium text-slate-700">Report Period</label>
+            <div className="mt-2 grid grid-cols-3 gap-2 rounded-xl bg-slate-100 p-1">
+              {(["daily", "weekly", "monthly"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => {
+                    setReportMode(mode);
+                    resetComputed();
+                  }}
+                  className={`rounded-lg py-1.5 text-xs font-semibold transition ${
+                    reportMode === mode
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  {mode.toUpperCase()}
+                </button>
+              ))}
+            </div>
+
+            {/* Anchor Date Input */}
+            <label className="mt-4 block text-sm font-medium text-slate-700">Anchor Date</label>
             <input
               type="date"
               value={selectedDate}
@@ -513,15 +717,99 @@ export default function ReturnAnalysisPage() {
               className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-400"
             />
 
-            <div className="mt-3 rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-700">
+            {/* Date Details Info Box */}
+            <div className="mt-3 rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-700 space-y-1">
               <div>
-                <span className="font-semibold">Day:</span> {weekday ?? "—"}
+                <span className="font-semibold">Selected Range:</span>{" "}
+                {reportMode === "daily"
+                  ? selectedDate
+                  : `${activeDateRange.start} to ${activeDateRange.end}`}
               </div>
-              <div className="mt-1">
-                <span className="font-semibold">Allowed lottery types:</span>{" "}
-                {weekday ? allowedTypes.join(", ") : "Select a date"}
-              </div>
+              {reportMode === "daily" && weekday && (
+                <div>
+                  <span className="font-semibold">Day:</span> {weekday}
+                </div>
+              )}
             </div>
+
+            {/* Return Threshold Controls */}
+            <label className="mt-4 block text-sm font-medium text-slate-700">Return Limit %</label>
+            <div className="mt-2 flex gap-3 items-center">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                value={returnThreshold}
+                onChange={(e) => setReturnThreshold(Number(e.target.value))}
+                className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-slate-400"
+              />
+              <span className="text-xs text-slate-500">% return threshold</span>
+            </div>
+
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="showOnlyExceeded"
+                checked={showOnlyExceeded}
+                onChange={(e) => setShowOnlyExceeded(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+              />
+              <label htmlFor="showOnlyExceeded" className="text-xs text-slate-700 font-medium select-none cursor-pointer">
+                Show only agents exceeding limit ({returnThreshold}%)
+              </label>
+            </div>
+
+            {/* Database Files Status */}
+            {selectedDate && (
+              <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 space-y-2">
+                <div className="font-semibold text-slate-800">
+                  Database Files ({reportMode === "daily" ? "Daily" : reportMode === "weekly" ? "Weekly" : "Monthly"})
+                </div>
+                {isLoadingDbFiles ? (
+                  <div className="text-slate-500 animate-pulse">Checking saved files...</div>
+                ) : (
+                  <>
+                    <div className="flex justify-between">
+                      <span>ERP Summary Files:</span>
+                      <span className="font-bold text-slate-900">
+                        {dbErpFiles.length} {reportMode !== "daily" && `(${activeErpFiles.length} active)`}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Return Files:</span>
+                      <span className="font-bold text-slate-900">
+                        {dbReturnFiles.length} {reportMode !== "daily" && `(${activeReturnFiles.length} active)`}
+                      </span>
+                    </div>
+                    {reportMode !== "daily" && (
+                      <div className="text-[10px] text-slate-500 mt-1 border-t border-slate-100 pt-1.5">
+                        * Only days with <b>both</b> Sales and Return uploads are active ({activeDates.size} days).
+                      </div>
+                    )}
+
+                    {activeErpFiles.length > 0 ? (
+                      <button
+                        onClick={handleLoadSavedAndRun}
+                        disabled={isBusy}
+                        className="mt-2 w-full rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 transition shadow-sm"
+                      >
+                        {isFetchingSaved ? "Downloading & Analyzing..." : "Load & Run Auto Analysis"}
+                      </button>
+                    ) : (
+                      <div className="mt-1 text-[11px] text-amber-600 font-medium">
+                        No active files to analyze for this range.
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            <div className="my-5 border-t border-slate-200"></div>
+
+            {/* Manual Uploads Option */}
+            <h3 className="text-sm font-semibold text-slate-800">Or Manual Upload Files</h3>
 
             <label className="mt-4 block text-sm font-medium text-slate-700">Sales files (.xlsx) — multiple</label>
             <input
@@ -568,20 +856,22 @@ export default function ReturnAnalysisPage() {
               <div className="mt-1">Return% = (ReturnQty / SalesQty) × 100</div>
               <div className="mt-1">ActualSales = SalesQty − ReturnQty</div>
               <div className="mt-2 text-slate-600">
-                Lottery type is inferred from each file name. Only types allowed for the selected weekday are accepted.
+                Consolidated agent totals combine sales and returns across all matched files in the selected time window.
               </div>
             </div>
           </div>
 
           {/* Results */}
           <div className="lg:col-span-2 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
               <div>
-                <h2 className="text-base font-semibold">Results</h2>
+                <h2 className="text-base font-semibold">Agent Returns Report</h2>
                 <p className="mt-1 text-xs text-slate-600">
-                  Date: <span className="font-semibold">{selectedDate || "—"}</span>{" "}
-                  • Day: <span className="font-semibold">{weekday || "—"}</span>{" "}
-                  • Types found: <span className="font-semibold">{typeResults.length}</span>
+                  Range: <span className="font-semibold">{activeDateRange.start} to {activeDateRange.end}</span>{" "}
+                  • Active Agents: <span className="font-semibold">{filteredResults.length}</span>
+                  {excludedAgents.size > 0 && (
+                    <span className="ml-2 text-slate-500">({excludedAgents.size} excluded)</span>
+                  )}
                 </p>
               </div>
 
@@ -589,91 +879,134 @@ export default function ReturnAnalysisPage() {
                 <select
                   value={downloadFormat}
                   onChange={(e) => setDownloadFormat(e.target.value as "excel" | "pdf")}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                  disabled={!typeResults.length}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-slate-400"
+                  disabled={!filteredResults.length}
                 >
-                  <option value="excel">Excel (All Types)</option>
-                  <option value="pdf">PDF Report (All Types)</option>
+                  <option value="excel">Excel Summary</option>
+                  <option value="pdf">PDF Report</option>
                 </select>
 
                 <button
                   onClick={handleDownload}
-                  disabled={!typeResults.length}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+                  disabled={!filteredResults.length}
+                  className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-50 transition shadow-sm"
                 >
                   Download
                 </button>
               </div>
             </div>
 
-            {!typeResults.length ? (
-              <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                Upload files and run analysis to see Top 15 per lottery type.
-              </div>
-            ) : (
-              <div className="mt-4 space-y-6">
-                {typeResults.map((tr) => (
-                  <div key={tr.lotteryType} className="rounded-2xl border border-slate-200">
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
-                      <div>
-                        <div className="text-sm font-semibold">
-                          Lottery Type: <span className="font-bold">{tr.lotteryType}</span>
-                        </div>
-                        <div className="mt-1 text-xs text-slate-600">
-                          Agents: <span className="font-semibold">{tr.totals.uniqueAgents}</span> •
-                          SalesQty: <span className="font-semibold">{tr.totals.totalSalesQty}</span> •
-                          ReturnQty: <span className="font-semibold">{tr.totals.totalReturnQty}</span> •
-                          Overall Return%: <span className="font-semibold">{tr.totals.overallReturnPct.toFixed(2)}%</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full text-sm">
-                        <thead className="text-slate-700">
-                          <tr>
-                            <th className="px-3 py-2 text-left">Rank</th>
-                            <th className="px-3 py-2 text-left">Agent Code</th>
-                            <th className="px-3 py-2 text-left">Agent Name</th>
-                            <th className="px-3 py-2 text-right">Sales Qty</th>
-                            <th className="px-3 py-2 text-right">Return Qty</th>
-                            <th className="px-3 py-2 text-right">Actual Sales</th>
-                            <th className="px-3 py-2 text-right">Return %</th>
-                          </tr>
-                        </thead>
-
-                        <tbody>
-                          {tr.top.map((r) => (
-                            <tr key={`${tr.lotteryType}-${r.agentCode}-${r.rank}`} className="border-t border-slate-200">
-                              <td className="px-3 py-2">{r.rank}</td>
-                              <td className="px-3 py-2 font-medium">{r.agentCode}</td>
-                              <td className="px-3 py-2">{r.agentName ?? "—"}</td>
-                              <td className="px-3 py-2 text-right">{r.salesQty}</td>
-                              <td className="px-3 py-2 text-right">{r.returnQty}</td>
-                              <td className="px-3 py-2 text-right">{r.actualSales}</td>
-                              <td className="px-3 py-2 text-right font-semibold">{r.returnPct.toFixed(2)}%</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <div className="px-4 py-3 text-xs text-slate-500">
-                      Top 15 is calculated per lottery type using merged Sales/Return totals (per agent).
-                    </div>
-                  </div>
-                ))}
+            {excludedAgents.size > 0 && (
+              <div className="mt-3 flex items-center justify-between rounded-xl bg-indigo-50 border border-indigo-100 px-3 py-2 text-xs">
+                <span className="text-indigo-800">
+                  Some agents have been excluded from this report list.
+                </span>
+                <button
+                  onClick={() => setExcludedAgents(new Set())}
+                  className="font-bold text-indigo-700 hover:text-indigo-900 underline"
+                >
+                  Restore all removed agents ({excludedAgents.size})
+                </button>
               </div>
             )}
 
-            <div className="mt-4 text-xs text-slate-500">
-              Enforcement: Every uploaded file must include a valid lottery type token in the filename (e.g., AKF, KTF...) and must be allowed for the selected weekday.
-            </div>
+            {!filteredResults.length ? (
+              <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                {allAgentResults.length > 0 
+                  ? "No agents match the current filter criteria."
+                  : "Upload files or load from database to see the consolidated agent report."}
+              </div>
+            ) : (
+              <div className="mt-4 space-y-6">
+                {/* Overall Summary Card */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                  <div>
+                    <div className="text-xs text-slate-500 font-medium">Total Agents</div>
+                    <div className="text-lg font-bold text-slate-950 mt-0.5">{overallTotals.uniqueAgents}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500 font-medium">Total Sales Qty</div>
+                    <div className="text-lg font-bold text-slate-950 mt-0.5">{overallTotals.totalSalesQty.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500 font-medium">Total Return Qty</div>
+                    <div className="text-lg font-bold text-slate-950 mt-0.5">{overallTotals.totalReturnQty.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500 font-medium">Overall Return %</div>
+                    <div className="text-lg font-bold text-slate-950 mt-0.5">{overallTotals.overallReturnPct.toFixed(2)}%</div>
+                  </div>
+                </div>
 
-            <div className="mt-3 text-xs text-slate-500">
-              Required packages:
-              <span className="ml-2 font-mono">npm i jspdf jspdf-autotable</span>
-            </div>
+                {/* Agents List Table */}
+                <div className="rounded-2xl border border-slate-200 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-slate-50 text-slate-700">
+                        <tr>
+                          <th className="px-3 py-2.5 text-left font-medium">Rank</th>
+                          <th className="px-3 py-2.5 text-left font-medium">Agent Code</th>
+                          <th className="px-3 py-2.5 text-left font-medium">Agent Name</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Sales Qty</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Return Qty</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Actual Sales</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Return %</th>
+                          <th className="px-3 py-2.5 text-center font-medium">Actions</th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {filteredResults.map((r) => {
+                          const isExceeded = r.returnPct >= returnThreshold;
+                          return (
+                            <tr 
+                              key={r.agentCode} 
+                              className={`border-t border-slate-200 transition-colors ${
+                                isExceeded ? "bg-rose-50/50 hover:bg-rose-50" : "hover:bg-slate-50/80"
+                              }`}
+                            >
+                              <td className="px-3 py-2.5">{r.rank}</td>
+                              <td className="px-3 py-2.5 font-mono text-xs font-semibold">{r.agentCode}</td>
+                              <td className="px-3 py-2.5 text-slate-700 truncate max-w-[150px]" title={r.agentName}>{r.agentName ?? "—"}</td>
+                              <td className="px-3 py-2.5 text-right">{r.salesQty.toLocaleString()}</td>
+                              <td className="px-3 py-2.5 text-right">{r.returnQty.toLocaleString()}</td>
+                              <td className="px-3 py-2.5 text-right">{r.actualSales.toLocaleString()}</td>
+                              <td className={`px-3 py-2.5 text-right font-bold ${
+                                isExceeded ? "text-rose-600" : "text-slate-900"
+                              }`}>
+                                {r.returnPct.toFixed(2)}%
+                              </td>
+                              <td className="px-3 py-2.5 text-center">
+                                <button
+                                  onClick={() => {
+                                    setExcludedAgents((prev) => {
+                                      const next = new Set(prev);
+                                      next.add(r.agentCode);
+                                      return next;
+                                    });
+                                  }}
+                                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-rose-600 transition"
+                                  title="Remove agent from list"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 mx-auto">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                  </svg>
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="text-xs text-slate-500 space-y-1">
+                  <div>* Excluded agents are fully removed from both screen results and downloaded PDF/Excel reports.</div>
+                  <div>* Returns exceeding the {returnThreshold}% limit are marked in red for easy identification.</div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
