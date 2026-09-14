@@ -879,6 +879,14 @@ export default function HomePage() {
               Returns Analyzer
             </Link>
 
+            {/* NLB Sales Upload */}
+            <Link
+              href="/nlb"
+              className="px-3 py-1.5 rounded bg-teal-600 hover:bg-teal-700 text-white text-xs font-medium shadow"
+            >
+              NLB Sales Upload
+            </Link>
+
             {/* Logout */}
             <button
               type="button"
