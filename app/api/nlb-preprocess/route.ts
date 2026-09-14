@@ -4,6 +4,8 @@ import * as XLSX from "xlsx";
 import {
   validateFilename,
   preprocessRawSheet,
+  isPurchaseReportSheet,
+  preprocessPurchaseSheet,
 } from "../../lib/nlbPreprocess";
 import type { PreprocessResult } from "../../lib/nlbPreprocess";
 
@@ -64,10 +66,14 @@ export async function POST(req: Request) {
       );
     }
 
-    // 3. Preprocess
-    const result = preprocessRawSheet(data, validation.code);
-
-    return Response.json(result);
+    // 3. Preprocess (Auto-detect report type)
+    if (isPurchaseReportSheet(data)) {
+      const result = preprocessPurchaseSheet(data, validation.code);
+      return Response.json(result);
+    } else {
+      const result = preprocessRawSheet(data, validation.code);
+      return Response.json({ ...result, reportType: "sales_summary" });
+    }
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "Unknown server error.";

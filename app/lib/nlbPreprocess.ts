@@ -22,12 +22,43 @@ export type ProcessedRow = {
 export type PreprocessResult = {
   code: string;
   status: "completed" | "failed";
+  reportType?: "sales_summary";
   drawNumber: string | null;
   rows: ProcessedRow[];
   rowCount: number;
   warnings: string[];
   errors: string[];
 };
+
+export type PurchaseRow = {
+  drawNumber: string;
+  drawDate: string;
+  txType: "PURCHASE" | "RETURN";
+  txDate: string;
+  serialNumber: string;
+  reference: string;
+  startingBarcode: string;
+  endingBarcode: string;
+  quantity: number;
+};
+
+export type PurchaseReportResult = {
+  code: string;
+  status: "completed" | "failed";
+  reportType: "purchase_range";
+  gameName: string | null;
+  drawNumber: string | null;
+  drawDate: string | null;
+  rows: PurchaseRow[];
+  rowCount: number;
+  totalPurchase: number;
+  totalReturn: number;
+  netQuantity: number;
+  warnings: string[];
+  errors: string[];
+};
+
+export type AnyPreprocessResult = PreprocessResult | PurchaseReportResult;
 
 type Cell = string | number | boolean | null | undefined;
 
@@ -37,23 +68,26 @@ type Cell = string | number | boolean | null | undefined;
 
 export function validateFilename(
   filename: string
-): { valid: boolean; code: LotteryCode | null; error: string | null } {
+): { valid: boolean; code: string | null; error: string | null; isStock?: boolean } {
   if (!filename) {
     return { valid: false, code: null, error: "No filename provided." };
   }
 
   // Strip .xls / .xlsx extension
   const base = filename.replace(/\.(xlsx?)$/i, "").trim();
-  const upper = base.toUpperCase();
+  const isStock = /_stock|_purchase/i.test(base);
+  const cleanCode = base.replace(/(_stock|_purchase)$/i, "").trim().toUpperCase();
 
-  if ((ALLOWED_CODES as readonly string[]).includes(upper)) {
-    return { valid: true, code: upper as LotteryCode, error: null };
+  // Allow standard codes or any 2-5 letter lottery code (e.g. MST, GSM, ADE, MSE)
+  if ((ALLOWED_CODES as readonly string[]).includes(cleanCode) || /^[A-Z]{2,5}$/.test(cleanCode)) {
+    return { valid: true, code: cleanCode, error: null, isStock };
   }
 
   return {
     valid: false,
     code: null,
-    error: `Invalid filename "${filename}". Allowed file names are: ${ALLOWED_CODES.join(", ")}.`,
+    error: `Invalid filename "${filename}". Allowed lottery codes are MSE, ADE, MST, GSE, etc.`,
+    isStock,
   };
 }
 
@@ -525,4 +559,272 @@ export function preprocessRawSheet(
       : warnings,
     errors,
   };
+}
+
+/* =====================================================
+   PURCHASE & PURCHASE RETURN REPORT (STOCK REPORT)
+   ===================================================== */
+
+function formatExcelDate(val: Cell): string {
+  if (val == null) return "";
+  if (typeof val === "number") {
+    // Excel serial date (e.g. 46276 -> 2026-09-11)
+    if (val >= 30000 && val <= 60000) {
+      try {
+        const d = new Date((val - 25569) * 86400 * 1000);
+        return d.toISOString().slice(0, 10);
+      } catch {
+        return String(val);
+      }
+    }
+    return String(val);
+  }
+  const s = String(val).trim();
+  const m = s.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+  if (m) {
+    return `${m[3]}-${m[2]}-${m[1]}`;
+  }
+  return s;
+}
+
+function cleanBarcodeNumber(val: Cell): string {
+  if (val == null) return "";
+  if (typeof val === "number") {
+    if (!Number.isFinite(val)) return "";
+    return String(Math.round(val));
+  }
+  const s = String(val).trim();
+  if (/e/i.test(s)) {
+    const n = Number(s);
+    if (!Number.isNaN(n)) return String(Math.round(n));
+  }
+  return s.replace(/[^\d]/g, "");
+}
+
+/**
+ * Check whether a sheet is a Purchase and Purchase Return Report
+ */
+export function isPurchaseReportSheet(data: Cell[][]): boolean {
+  for (const row of data.slice(0, 10)) {
+    for (const cell of row) {
+      if (
+        typeof cell === "string" &&
+        /Purchase\s+and\s+Purcha[se]+\s+Return\s+Report/i.test(cell)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Preprocess Purchase and Purchase Return Report sheet into structured rows
+ */
+export function preprocessPurchaseSheet(
+  data: Cell[][],
+  code: string
+): PurchaseReportResult {
+  const warnings: string[] = [];
+  const errors: string[] = [];
+
+  let gameName: string | null = null;
+  let drawNumber: string | null = null;
+  let drawDate: string | null = null;
+
+  // Extract game name, draw number, draw date from header
+  for (const row of data.slice(0, 12)) {
+    for (const cell of row) {
+      if (typeof cell === "string") {
+        const m = cell.match(
+          /^(.*?)\s*\(\s*DRAW\s*NO\s*&\s*DATE\s*\*(\d+)\*\s*(\d{4}-\d{2}-\d{2})\s*\)/i
+        );
+        if (m) {
+          gameName = m[1].trim();
+          drawNumber = m[2].trim();
+          drawDate = m[3].trim();
+          break;
+        }
+
+        const starMatch = cell.match(/\*(\d{2,6})\*/);
+        if (starMatch && !drawNumber) {
+          drawNumber = starMatch[1];
+        }
+
+        const dateMatch = cell.match(/(\d{4}-\d{2}-\d{2})/);
+        if (dateMatch && !drawDate) {
+          drawDate = dateMatch[1];
+        }
+      }
+    }
+    if (drawNumber && drawDate) break;
+  }
+
+  if (!drawNumber) {
+    errors.push("Draw Number could not be detected in Purchase Report header.");
+  }
+
+  // Parse transaction blocks (PURCHASE vs RETURN)
+  let currentTxType: "PURCHASE" | "RETURN" | null = null;
+  const rows: PurchaseRow[] = [];
+
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    if (!row || row.length === 0) continue;
+
+    for (const cell of row) {
+      if (typeof cell === "string") {
+        const upper = cell.trim().toUpperCase();
+        if (upper === "PURCHASE" || upper.startsWith("PURCHASE ")) {
+          currentTxType = "PURCHASE";
+          break;
+        } else if (upper === "RETURN" || upper.startsWith("RETURN ")) {
+          currentTxType = "RETURN";
+          break;
+        } else if (upper === "NET" || upper.startsWith("NET ")) {
+          currentTxType = null;
+          break;
+        }
+      }
+    }
+
+    if (!currentTxType) continue;
+
+    const barcodes: string[] = [];
+    for (const cell of row) {
+      const b = cleanBarcodeNumber(cell);
+      if (b.length >= 10) barcodes.push(b);
+    }
+
+    if (barcodes.length >= 2) {
+      let txDate = "";
+      let serial = "";
+      let ref = "";
+      let qty = 0;
+
+      for (const cell of row) {
+        if (typeof cell === "number") {
+          if (cell >= 30000 && cell <= 60000 && !txDate) {
+            txDate = formatExcelDate(cell);
+          } else if (cell < 1000000 && cell !== 0 && !qty) {
+            qty = Math.abs(cell);
+          }
+        } else if (typeof cell === "string") {
+          const s = cell.trim();
+          if (/^\d{2}[-/]\d{2}[-/]\d{4}$/.test(s) && !txDate) {
+            txDate = formatExcelDate(s);
+          } else if (/^[A-Z]\d{5,10}$/i.test(s) && !serial) {
+            serial = s;
+          } else if (/^[A-Z]$/i.test(s) && !ref) {
+            ref = s;
+          }
+        }
+      }
+
+      if (!qty && barcodes.length >= 2) {
+        try {
+          qty = Number(BigInt(barcodes[1]) - BigInt(barcodes[0]) + BigInt(1));
+        } catch {
+          qty = 0;
+        }
+      }
+
+      rows.push({
+        drawNumber: drawNumber || "",
+        drawDate: drawDate || "",
+        txType: currentTxType,
+        txDate,
+        serialNumber: serial,
+        reference: ref,
+        startingBarcode: barcodes[0],
+        endingBarcode: barcodes[1],
+        quantity: qty,
+      });
+    }
+  }
+
+  const totalPurchase = rows
+    .filter((r) => r.txType === "PURCHASE")
+    .reduce((sum, r) => sum + r.quantity, 0);
+
+  const totalReturn = rows
+    .filter((r) => r.txType === "RETURN")
+    .reduce((sum, r) => sum + r.quantity, 0);
+
+  const netQuantity = totalPurchase - totalReturn;
+
+  const status = errors.length === 0 && rows.length > 0 ? "completed" : "failed";
+
+  return {
+    code: code.toUpperCase(),
+    status,
+    reportType: "purchase_range",
+    gameName,
+    drawNumber,
+    drawDate,
+    rows,
+    rowCount: rows.length,
+    totalPurchase,
+    totalReturn,
+    netQuantity,
+    warnings,
+    errors,
+  };
+}
+
+/**
+ * Generate standard clean 9-column XLSX for Purchase Range detailed file
+ */
+export function generatePurchaseXlsx(rows: PurchaseRow[]): Blob {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const XLSX = require("xlsx");
+  const header = [
+    "Draw Number",
+    "Draw Date",
+    "Transaction Type",
+    "Transaction Date",
+    "Serial Number",
+    "Reference",
+    "Starting Barcode",
+    "Ending Barcode",
+    "Quantity",
+  ];
+
+  const aoa: (string | number)[][] = [
+    header,
+    ...rows.map((r) => [
+      r.drawNumber,
+      r.drawDate,
+      r.txType,
+      r.txDate,
+      r.serialNumber,
+      r.reference,
+      r.startingBarcode,
+      r.endingBarcode,
+      r.quantity,
+    ]),
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Force barcode columns G (col 6) and H (col 7) to TEXT
+  const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+  for (let R = range.s.r + 1; R <= range.e.r; R++) {
+    for (const C of [6, 7]) {
+      const ref = XLSX.utils.encode_cell({ r: R, c: C });
+      const cell = ws[ref];
+      if (cell) {
+        cell.t = "s";
+        cell.z = "@";
+      }
+    }
+  }
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Stock");
+  const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+
+  return new Blob([wbout], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
 }
