@@ -53,6 +53,7 @@ type ModalPreviewData = {
   netQuantity?: number;
   onDownload?: () => void;
   onSaveToFirebase?: () => void;
+  onDelete?: () => void;
   isSaved?: boolean;
   currentIndex?: number;
   totalCount?: number;
@@ -716,6 +717,22 @@ export default function NlbPreprocessPage() {
           : undefined,
     };
 
+    const onDelete = () => {
+      setSalesFiles((prev) => prev.filter((f) => f.id !== entry.id));
+      setPurchaseFiles((prev) => prev.filter((f) => f.id !== entry.id));
+      setSelectedSalesIds((prev) => {
+        const next = new Set(prev);
+        next.delete(entry.id);
+        return next;
+      });
+      setSelectedPurchaseIds((prev) => {
+        const next = new Set(prev);
+        next.delete(entry.id);
+        return next;
+      });
+      setPreviewModal(null);
+    };
+
     if (r.reportType === "purchase_range") {
       const pr = r as PurchaseReportResult;
       setPreviewModal({
@@ -730,6 +747,7 @@ export default function NlbPreprocessPage() {
         netQuantity: pr.netQuantity,
         onDownload: () => handleDownloadSingle(entry),
         onSaveToFirebase: () => handleSaveSingleToFirebase(entry),
+        onDelete,
         isSaved: entry.isSavedToFirebase,
         ...navProps,
       });
@@ -743,6 +761,7 @@ export default function NlbPreprocessPage() {
         salesRows: sr.rows,
         onDownload: () => handleDownloadSingle(entry),
         onSaveToFirebase: () => handleSaveSingleToFirebase(entry),
+        onDelete,
         isSaved: entry.isSavedToFirebase,
         ...navProps,
       });
@@ -771,6 +790,11 @@ export default function NlbPreprocessPage() {
           : undefined,
     };
 
+    const onDelete = async () => {
+      await handleDeleteSaved(rec);
+      setPreviewModal(null);
+    };
+
     // Show immediate feedback with loading state
     setPreviewModal((prev) => ({
       ...(prev || {
@@ -788,6 +812,7 @@ export default function NlbPreprocessPage() {
       totalReturn: rec.totalReturn,
       netQuantity: rec.netQuantity,
       onDownload: () => handleDownloadSingleSaved(rec),
+      onDelete,
       isSaved: true,
       isLoading: true,
       ...navProps,
@@ -828,6 +853,7 @@ export default function NlbPreprocessPage() {
           totalReturn: rec.totalReturn,
           netQuantity: rec.netQuantity,
           onDownload: () => handleDownloadSingleSaved(rec),
+          onDelete,
           isSaved: true,
           isLoading: false,
           ...navProps,
@@ -851,6 +877,7 @@ export default function NlbPreprocessPage() {
           drawNumber: rec.drawNumber || "-",
           salesRows: rows,
           onDownload: () => handleDownloadSingleSaved(rec),
+          onDelete,
           isSaved: true,
           isLoading: false,
           ...navProps,
@@ -924,25 +951,31 @@ export default function NlbPreprocessPage() {
   }
 
   async function handleDeleteSaved(rec: NlbUploadedFileRecord) {
-    if (!confirm(`Delete ${rec.fileName} from Firebase?`)) return;
+    if (typeof window !== "undefined" && window.confirm) {
+      if (!window.confirm(`Delete ${rec.fileName} from Firebase?`)) return;
+    }
     setDeletingRecordId(rec.id);
+
+    // Optimistic removal so file disappears immediately
+    setSavedPurchaseFiles((prev) => prev.filter((f) => f.id !== rec.id && f.fileName !== rec.fileName));
+    setSavedSalesFiles((prev) => prev.filter((f) => f.id !== rec.id && f.fileName !== rec.fileName));
+    setSelectedSavedPurchaseIds((prev) => {
+      const next = new Set(prev);
+      next.delete(rec.id);
+      return next;
+    });
+    setSelectedSavedSalesIds((prev) => {
+      const next = new Set(prev);
+      next.delete(rec.id);
+      return next;
+    });
+
     try {
       await deleteNlbUploadedFile(rec);
-      if (rec.reportType === "purchase_range") {
-        setSelectedSavedPurchaseIds((prev) => {
-          const next = new Set(prev);
-          next.delete(rec.id);
-          return next;
-        });
-        await loadSavedPurchases(selectedDate);
-      } else {
-        setSelectedSavedSalesIds((prev) => {
-          const next = new Set(prev);
-          next.delete(rec.id);
-          return next;
-        });
-        await loadSavedSales(selectedDate);
-      }
+      await Promise.all([
+        loadSavedSales(selectedDate),
+        loadSavedPurchases(selectedDate),
+      ]);
       setFeedbackMessage({
         type: "success",
         text: `Deleted ${rec.fileName} from Firebase.`,
@@ -950,6 +983,10 @@ export default function NlbPreprocessPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error deleting file.";
       setFeedbackMessage({ type: "error", text: msg });
+      await Promise.all([
+        loadSavedSales(selectedDate),
+        loadSavedPurchases(selectedDate),
+      ]);
     } finally {
       setDeletingRecordId(null);
     }
@@ -958,13 +995,18 @@ export default function NlbPreprocessPage() {
   async function handleDeleteSelectedSavedSales() {
     const recordsToDelete = savedSalesFiles.filter((f) => selectedSavedSalesIds.has(f.id));
     if (recordsToDelete.length === 0) return;
-    if (!confirm(`Delete ${recordsToDelete.length} selected Sales file(s) from Firebase?`)) return;
+    if (typeof window !== "undefined" && window.confirm) {
+      if (!window.confirm(`Delete ${recordsToDelete.length} selected Sales file(s) from Firebase?`)) return;
+    }
+
+    const idsToDelete = new Set(recordsToDelete.map((r) => r.id));
+    setSavedSalesFiles((prev) => prev.filter((f) => !idsToDelete.has(f.id)));
+    setSelectedSavedSalesIds(new Set());
 
     try {
       for (const rec of recordsToDelete) {
         await deleteNlbUploadedFile(rec);
       }
-      setSelectedSavedSalesIds(new Set());
       await loadSavedSales(selectedDate);
       setFeedbackMessage({
         type: "success",
@@ -973,19 +1015,25 @@ export default function NlbPreprocessPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error deleting sales files.";
       setFeedbackMessage({ type: "error", text: msg });
+      await loadSavedSales(selectedDate);
     }
   }
 
   async function handleDeleteSelectedSavedPurchases() {
     const recordsToDelete = savedPurchaseFiles.filter((f) => selectedSavedPurchaseIds.has(f.id));
     if (recordsToDelete.length === 0) return;
-    if (!confirm(`Delete ${recordsToDelete.length} selected Purchase file(s) from Firebase?`)) return;
+    if (typeof window !== "undefined" && window.confirm) {
+      if (!window.confirm(`Delete ${recordsToDelete.length} selected Purchase file(s) from Firebase?`)) return;
+    }
+
+    const idsToDelete = new Set(recordsToDelete.map((r) => r.id));
+    setSavedPurchaseFiles((prev) => prev.filter((f) => !idsToDelete.has(f.id)));
+    setSelectedSavedPurchaseIds(new Set());
 
     try {
       for (const rec of recordsToDelete) {
         await deleteNlbUploadedFile(rec);
       }
-      setSelectedSavedPurchaseIds(new Set());
       await loadSavedPurchases(selectedDate);
       setFeedbackMessage({
         type: "success",
@@ -994,6 +1042,7 @@ export default function NlbPreprocessPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error deleting purchase files.";
       setFeedbackMessage({ type: "error", text: msg });
+      await loadSavedPurchases(selectedDate);
     }
   }
 
@@ -1229,6 +1278,16 @@ export default function NlbPreprocessPage() {
                         className="px-3 py-1 rounded bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer"
                       >
                         Save to Cloud ({selectedSalesIds.size})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSalesFiles((prev) => prev.filter((f) => !selectedSalesIds.has(f.id)));
+                          setSelectedSalesIds(new Set());
+                        }}
+                        className="px-2.5 py-1 rounded border border-red-300 text-red-600 text-xs bg-white hover:bg-red-50 font-medium cursor-pointer"
+                      >
+                        Remove ({selectedSalesIds.size})
                       </button>
                     </div>
                   )}
@@ -1570,7 +1629,17 @@ export default function NlbPreprocessPage() {
                         disabled={isSavingFirebase}
                         className="px-3 py-1 rounded bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer"
                       >
-                        Save to Cloud ({selectedPurchaseIds.size})
+                        Save ({selectedPurchaseIds.size})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPurchaseFiles((prev) => prev.filter((f) => !selectedPurchaseIds.has(f.id)));
+                          setSelectedPurchaseIds(new Set());
+                        }}
+                        className="px-2.5 py-1 rounded border border-red-300 text-red-600 text-xs bg-white hover:bg-red-50 font-medium cursor-pointer"
+                      >
+                        Remove ({selectedPurchaseIds.size})
                       </button>
                     </div>
                   )}
@@ -2274,6 +2343,16 @@ function FilePreviewModal({
                 className="px-4 py-1.5 rounded bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold shadow-xs cursor-pointer transition-colors"
               >
                 {data.isSaved ? "Re-Save" : "Save"}
+              </button>
+            )}
+
+            {data.onDelete && (
+              <button
+                type="button"
+                onClick={data.onDelete}
+                className="px-3.5 py-1.5 rounded border border-red-300 text-red-600 bg-white hover:bg-red-50 text-xs font-semibold shadow-2xs cursor-pointer transition-colors"
+              >
+                Delete
               </button>
             )}
 

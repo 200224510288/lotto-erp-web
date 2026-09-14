@@ -342,33 +342,64 @@ export async function listNlbUploadedFilesByDate(
 
 /**
  * Delete an NLB uploaded file from Firebase (Storage + Firestore).
- * Checks the appropriate collection based on reportType or attempts all.
+ * Checks both dedicated collections (sales & purchases) and legacy collections,
+ * ensuring no stale records remain.
  */
 export async function deleteNlbUploadedFile(
   record: NlbUploadedFileRecord
 ): Promise<void> {
   // 1. Delete binary from Storage
   if (record.storagePath) {
-    const storageRef = ref(storage, record.storagePath);
-    await deleteObject(storageRef).catch(() => {
+    try {
+      const storageRef = ref(storage, record.storagePath);
+      await deleteObject(storageRef);
+    } catch {
       // Ignore if missing in Storage
-    });
+    }
   }
 
-  // 2. Delete document from corresponding Firestore collection
-  const targetCollection =
-    record.reportType === "purchase_range"
-      ? PURCHASE_COLLECTION
-      : SALES_COLLECTION;
-
-  try {
-    await deleteDoc(doc(db, targetCollection, record.id));
-  } catch {
-    // If not found in target collection, try legacy collection
+  if (record.downloadUrl) {
     try {
-      await deleteDoc(doc(db, LEGACY_COLLECTION, record.id));
+      const storageRef = ref(storage, record.downloadUrl);
+      await deleteObject(storageRef);
     } catch {
-      // Non-fatal
+      // Ignore if missing or external
+    }
+  }
+
+  // 2. Delete document from all possible Firestore collections by ID
+  await Promise.allSettled([
+    deleteDoc(doc(db, SALES_COLLECTION, record.id)),
+    deleteDoc(doc(db, PURCHASE_COLLECTION, record.id)),
+    deleteDoc(doc(db, LEGACY_COLLECTION, record.id)),
+  ]);
+
+  // 3. Purge any duplicate records matching this fileName and uploadDate
+  if (record.uploadDate) {
+    for (const colName of [SALES_COLLECTION, PURCHASE_COLLECTION, LEGACY_COLLECTION]) {
+      try {
+        if (record.fileName) {
+          const qName = query(
+            collection(db, colName),
+            where("uploadDate", "==", record.uploadDate),
+            where("fileName", "==", record.fileName)
+          );
+          const snapName = await getDocs(qName);
+          await Promise.allSettled(snapName.docs.map((d) => deleteDoc(d.ref)));
+        }
+
+        if (record.code) {
+          const qCode = query(
+            collection(db, colName),
+            where("uploadDate", "==", record.uploadDate),
+            where("code", "==", record.code.toUpperCase())
+          );
+          const snapCode = await getDocs(qCode);
+          await Promise.allSettled(snapCode.docs.map((d) => deleteDoc(d.ref)));
+        }
+      } catch {
+        // Non-fatal
+      }
     }
   }
 }
