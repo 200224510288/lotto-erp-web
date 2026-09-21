@@ -32,6 +32,7 @@ type ReturnFileEntry = {
   id: string;
   file: File;
   code: ReturnLotteryCode | "UNKNOWN";
+  rawCode?: string;
   status: "waiting" | "processing" | "completed" | "failed";
   result: ReturnPreprocessResult | null;
   errorMessage: string | null;
@@ -63,6 +64,12 @@ type LocalFolderStatus = {
   fileCount: number;
   files: string[];
   exists?: boolean;
+  isDirectory?: boolean;
+  status?:
+    | "Folder selected"
+    | "Folder accessible"
+    | "Folder not selected"
+    | "Folder unavailable";
   error?: string | null;
 };
 
@@ -208,6 +215,8 @@ export default function NlbReturnsPage() {
   // Local target folder status & editing state
   const [localFolderStatus, setLocalFolderStatus] =
     useState<LocalFolderStatus | null>(null);
+  const [sessionDirHandle, setSessionDirHandle] =
+    useState<FileSystemDirectoryHandle | null>(null);
   const [isCheckingFolder, setIsCheckingFolder] = useState(false);
   const [isEditingFolder, setIsEditingFolder] = useState(false);
   const [folderInput, setFolderInput] = useState("C:\\nlb return");
@@ -223,7 +232,7 @@ export default function NlbReturnsPage() {
   const [isDownloadingSelected, setIsDownloadingSelected] = useState(false);
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<{
-    type: "success" | "error";
+    type: "success" | "error" | "info";
     text: string;
     filePath?: string;
   } | null>(null);
@@ -253,7 +262,7 @@ export default function NlbReturnsPage() {
     null
   );
 
-  /* ---- Check target return folder & load path from DB ---- */
+  /* ---- Check target return folder directory & load path from DB ---- */
   const checkLocalFolder = useCallback(async (customPath?: string) => {
     setIsCheckingFolder(true);
     try {
@@ -282,6 +291,8 @@ export default function NlbReturnsPage() {
           fileCount: data.fileCount || 0,
           files: data.files || [],
           exists: true,
+          isDirectory: data.isDirectory ?? true,
+          status: "Folder accessible",
           error: null,
         });
       } else {
@@ -290,7 +301,9 @@ export default function NlbReturnsPage() {
           fileCount: 0,
           files: [],
           exists: false,
-          error: data.error || "File not found: Target folder does not exist on path",
+          isDirectory: false,
+          status: "Folder unavailable",
+          error: data.error || "Target folder is unavailable on local machine",
         });
       }
     } catch {
@@ -299,7 +312,9 @@ export default function NlbReturnsPage() {
         fileCount: 0,
         files: [],
         exists: false,
-        error: "File not found: Target folder does not exist on path",
+        isDirectory: false,
+        status: "Folder unavailable",
+        error: "Target folder is unavailable or could not be verified",
       });
     } finally {
       setIsCheckingFolder(false);
@@ -310,6 +325,107 @@ export default function NlbReturnsPage() {
     checkLocalFolder();
   }, [checkLocalFolder]);
 
+  /* ---- Choose Folder via Native Browser Directory Picker ---- */
+  async function handleChooseFolder() {
+    if (typeof window === "undefined" || !("showDirectoryPicker" in window)) {
+      setFeedbackMessage({
+        type: "info",
+        text: "Directory picker is not supported in this browser. You can edit the folder path directly using the pencil icon.",
+      });
+      return;
+    }
+    try {
+      const handle = await (window as any).showDirectoryPicker({
+        id: "nlb-return-folder",
+        mode: "readwrite",
+      });
+      if (handle) {
+        setSessionDirHandle(handle);
+        const folderDisplayName = handle.name || "nlb return";
+        setLocalFolderStatus((prev) => ({
+          folder: prev?.folder || `C:\\${folderDisplayName}`,
+          fileCount: prev?.fileCount || 0,
+          files: prev?.files || [],
+          exists: true,
+          isDirectory: true,
+          status: "Folder selected",
+          error: null,
+        }));
+        setFeedbackMessage({
+          type: "success",
+          text: `✓ Folder selected: "${folderDisplayName}". Generated return files will be written here.`,
+        });
+      }
+    } catch (err: any) {
+      if (err.name !== "AbortError") {
+        setFeedbackMessage({
+          type: "error",
+          text: `Folder selection failed: ${err.message}`,
+        });
+      }
+    }
+  }
+
+  /* ---- Compute Clean Status for Target Output Directory ---- */
+  function getTargetFolderStatus(): {
+    status:
+      | "Folder selected"
+      | "Folder accessible"
+      | "Folder not selected"
+      | "Folder unavailable";
+    badgeClass: string;
+    dotClass: string;
+    tooltip: string;
+  } {
+    if (sessionDirHandle) {
+      return {
+        status: "Folder selected",
+        badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-200",
+        dotClass: "bg-emerald-500",
+        tooltip: `Folder selected for this session: ${sessionDirHandle.name}`,
+      };
+    }
+
+    if (localFolderStatus?.exists && localFolderStatus?.isDirectory) {
+      return {
+        status: "Folder accessible",
+        badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-200",
+        dotClass: "bg-emerald-500",
+        tooltip: `Target directory accessible: ${localFolderStatus.folder} (${localFolderStatus.fileCount} file${localFolderStatus.fileCount === 1 ? "" : "s"})`,
+      };
+    }
+
+    if (
+      localFolderStatus?.exists === false ||
+      localFolderStatus?.status === "Folder unavailable"
+    ) {
+      return {
+        status: "Folder unavailable",
+        badgeClass: "bg-rose-50 text-rose-700 border-rose-200",
+        dotClass: "bg-rose-500",
+        tooltip:
+          localFolderStatus.error ||
+          "Target folder does not exist or is not a directory on this machine",
+      };
+    }
+
+    if (!localFolderStatus?.folder) {
+      return {
+        status: "Folder not selected",
+        badgeClass: "bg-amber-50 text-amber-700 border-amber-200",
+        dotClass: "bg-amber-500",
+        tooltip: "No target folder configured",
+      };
+    }
+
+    return {
+      status: "Folder accessible",
+      badgeClass: "bg-slate-50 text-slate-700 border-slate-200",
+      dotClass: "bg-slate-400",
+      tooltip: "Target directory configured",
+    };
+  }
+
   /* ---- Save modified folder path to DB & validate ---- */
   async function handleSaveFolderPath() {
     const trimmed = folderInput.trim();
@@ -319,7 +435,7 @@ export default function NlbReturnsPage() {
       // 1. Save to DB first
       await saveReturnFolderPathToDb(trimmed);
 
-      // 2. Validate existence with API
+      // 2. Validate directory existence with API
       const res = await fetch(
         `/api/nlb-return-save-local?folder=${encodeURIComponent(trimmed)}`
       );
@@ -331,25 +447,34 @@ export default function NlbReturnsPage() {
           fileCount: data.fileCount || 0,
           files: data.files || [],
           exists: true,
+          isDirectory: data.isDirectory ?? true,
+          status: "Folder accessible",
           error: null,
         });
-        notifySaveSuccess(`✓ Save location updated & saved to DB: ${trimmed}`);
+        notifySaveSuccess(`✓ Target folder updated & saved to DB: ${trimmed}`);
       } else {
         setLocalFolderStatus({
           folder: trimmed,
           fileCount: 0,
           files: [],
           exists: false,
-          error: data.error || "File not found: Target folder does not exist on path",
+          isDirectory: false,
+          status: "Folder unavailable",
+          error:
+            data.error ||
+            `Target folder "${trimmed}" is unavailable or does not exist`,
         });
         setFeedbackMessage({
           type: "error",
-          text: data.error || `File not found: Folder does not exist on path "${trimmed}". Saved to DB.`,
+          text:
+            data.error ||
+            `Target folder "${trimmed}" is unavailable. Saved to DB.`,
         });
       }
       setIsEditingFolder(false);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error saving folder path.";
+      const msg =
+        err instanceof Error ? err.message : "Error saving folder path.";
       setFeedbackMessage({ type: "error", text: msg });
     } finally {
       setIsSavingFolderPath(false);
@@ -376,7 +501,8 @@ export default function NlbReturnsPage() {
   }, [selectedDate, loadSavedReturns]);
 
   function getCleanFileName(entry: ReturnFileEntry): string {
-    return `${entry.code}_RETURN.xlsx`;
+    const codePrefix = entry.rawCode || entry.code;
+    return `${codePrefix}_RETURN.xlsx`;
   }
 
   function getEntryBlob(entry: ReturnFileEntry): Blob | null {
@@ -429,6 +555,7 @@ export default function NlbReturnsPage() {
           id: `${code}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
           file,
           code,
+          rawCode: val.rawCode || code,
           status: "waiting",
           result: null,
           errorMessage: null,
@@ -511,6 +638,25 @@ export default function NlbReturnsPage() {
     blob: Blob,
     filename: string
   ): Promise<{ success: boolean; message: string }> {
+    // 1. If user selected a directory handle via browser picker, write directly to it
+    if (sessionDirHandle) {
+      try {
+        const fileHandle = await (sessionDirHandle as any).getFileHandle(filename, {
+          create: true,
+        });
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return {
+          success: true,
+          message: `Saved ${filename} to selected folder "${sessionDirHandle.name}"`,
+        };
+      } catch (err: any) {
+        console.warn("Direct write to directory handle failed, falling back to local API:", err);
+      }
+    }
+
+    // 2. Local backend direct save
     try {
       const folderParam = localFolderStatus?.folder
         ? `&folder=${encodeURIComponent(localFolderStatus.folder)}`
@@ -532,7 +678,7 @@ export default function NlbReturnsPage() {
           message: data.message || `Saved to ${data.folder || "C:\\nlb return"}\\${filename}`,
         };
       }
-      return { success: false, message: data.error || "Local save failed" };
+      return { success: false, message: data.error || "Target folder is unavailable on local machine" };
     } catch (err: any) {
       return {
         success: false,
@@ -550,10 +696,11 @@ export default function NlbReturnsPage() {
 
     try {
       const res = await saveBlobToLocalReturnFolder(blob, fileName);
+      const targetDir = localFolderStatus?.folder || "C:\\nlb return";
       if (res.success) {
         notifySaveSuccess(
-          `✓ File saved successfully to ${localFolderStatus?.folder || "C:\\nlb return"}\\${fileName}`,
-          { filePath: `${localFolderStatus?.folder || "C:\\nlb return"}\\${fileName}` }
+          `✓ File saved successfully to ${targetDir}\\${fileName}`,
+          { filePath: `${targetDir}\\${fileName}` }
         );
         await checkLocalFolder();
       } else {
@@ -573,6 +720,7 @@ export default function NlbReturnsPage() {
     setIsSavingLocalBatch(true);
     let savedCount = 0;
     let lastError: string | null = null;
+    const targetDir = localFolderStatus?.folder || "C:\\nlb return";
 
     try {
       for (const entry of entries) {
@@ -589,8 +737,8 @@ export default function NlbReturnsPage() {
       }
       if (savedCount > 0) {
         notifySaveSuccess(
-          `✓ Successfully saved ${savedCount} file(s) to ${localFolderStatus?.folder || "C:\\nlb return"}!`,
-          { filePath: `${localFolderStatus?.folder || "C:\\nlb return"}\\`, count: savedCount }
+          `✓ Successfully saved ${savedCount} file(s) to ${targetDir}!`,
+          { filePath: `${targetDir}\\`, count: savedCount }
         );
       } else if (lastError) {
         setFeedbackMessage({
@@ -609,13 +757,14 @@ export default function NlbReturnsPage() {
     const blob = getEntryBlob(entry);
     if (!blob) return;
     const fileName = getCleanFileName(entry);
+    const targetDir = localFolderStatus?.folder || "C:\\nlb return";
 
-    // Save directly to C:\nlb return
+    // Save directly to target folder
     const saveRes = await saveBlobToLocalReturnFolder(blob, fileName);
     if (saveRes.success) {
       notifySaveSuccess(
-        `✓ File saved successfully to C:\\nlb return\\${fileName}`,
-        { filePath: `C:\\nlb return\\${fileName}` }
+        `✓ File saved successfully to ${targetDir}\\${fileName}`,
+        { filePath: `${targetDir}\\${fileName}` }
       );
       await checkLocalFolder();
       return;
@@ -627,8 +776,9 @@ export default function NlbReturnsPage() {
 
   async function handleDownloadBatch(entries: ReturnFileEntry[]) {
     setIsDownloadingSelected(true);
+    const targetDir = localFolderStatus?.folder || "C:\\nlb return";
     try {
-      // First attempt direct disk save to C:\nlb return
+      // First attempt direct disk save to target folder
       let savedCount = 0;
       for (const entry of entries) {
         const blob = getEntryBlob(entry);
@@ -641,8 +791,8 @@ export default function NlbReturnsPage() {
 
       if (savedCount > 0) {
         notifySaveSuccess(
-          `✓ Successfully saved ${savedCount} return file(s) to C:\\nlb return!`,
-          { filePath: `C:\\nlb return\\`, count: savedCount }
+          `✓ Successfully saved ${savedCount} return file(s) to ${targetDir}!`,
+          { filePath: `${targetDir}\\`, count: savedCount }
         );
         await checkLocalFolder();
         return;
@@ -670,13 +820,14 @@ export default function NlbReturnsPage() {
 
   /* ---- Saved Firebase Actions ---- */
   async function handleDownloadSingleSaved(rec: NlbReturnFileRecord) {
+    const targetDir = localFolderStatus?.folder || "C:\\nlb return";
     try {
       const blob = await fetchFileBlobFromUrl(rec.downloadUrl);
       const res = await saveBlobToLocalReturnFolder(blob, rec.fileName);
       if (res.success) {
         notifySaveSuccess(
-          `✓ File saved successfully to C:\\nlb return\\${rec.fileName}`,
-          { filePath: `C:\\nlb return\\${rec.fileName}` }
+          `✓ File saved successfully to ${targetDir}\\${rec.fileName}`,
+          { filePath: `${targetDir}\\${rec.fileName}` }
         );
         await checkLocalFolder();
         return;
@@ -691,6 +842,7 @@ export default function NlbReturnsPage() {
 
   async function handleDownloadSelectedSavedReturns() {
     setIsDownloadingSelected(true);
+    const targetDir = localFolderStatus?.folder || "C:\\nlb return";
     try {
       const recordsToDownload = savedReturnFiles.filter((f) =>
         selectedSavedReturnIds.has(f.id)
@@ -709,8 +861,8 @@ export default function NlbReturnsPage() {
 
       if (savedCount > 0) {
         notifySaveSuccess(
-          `✓ Successfully saved ${savedCount} file(s) to C:\\nlb return!`,
-          { filePath: `C:\\nlb return\\`, count: savedCount }
+          `✓ Successfully saved ${savedCount} file(s) to ${targetDir}!`,
+          { filePath: `${targetDir}\\`, count: savedCount }
         );
         await checkLocalFolder();
         return;
@@ -1071,7 +1223,7 @@ export default function NlbReturnsPage() {
                 }}
                 className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-300 shadow-2xs"
               >
-                <span className="text-slate-400">Target:</span>
+                <span className="text-slate-500 font-medium">Target folder:</span>
                 <input
                   type="text"
                   value={folderInput}
@@ -1084,7 +1236,7 @@ export default function NlbReturnsPage() {
                   type="submit"
                   disabled={isSavingFolderPath}
                   className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-white rounded text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-50"
-                  title="Save location path to DB"
+                  title="Save target folder path"
                 >
                   {isSavingFolderPath ? "Saving…" : "Save"}
                 </button>
@@ -1101,27 +1253,48 @@ export default function NlbReturnsPage() {
               </form>
             ) : (
               <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 shadow-2xs">
-                <span className="text-slate-400">Target:</span>
+                <span className="text-slate-400">Target folder:</span>
                 <span className="font-mono font-bold text-slate-800">
                   {localFolderStatus?.folder || "C:\\nlb return"}
                 </span>
 
-                {localFolderStatus?.exists === false ? (
-                  <span
-                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200 cursor-help"
-                    title={localFolderStatus.error || "File not found: Target folder does not exist on path"}
+                {/* Status Badge */}
+                {(() => {
+                  const { status, badgeClass, dotClass, tooltip } =
+                    getTargetFolderStatus();
+                  return (
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border ${badgeClass} cursor-help`}
+                      title={tooltip}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${dotClass}`}></span>
+                      {status}
+                    </span>
+                  );
+                })()}
+
+                {/* Choose Folder Button */}
+                <button
+                  type="button"
+                  onClick={handleChooseFolder}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 text-[11px] font-medium transition-colors cursor-pointer ml-0.5"
+                  title="Choose local destination folder"
+                >
+                  <svg
+                    className="w-3.5 h-3.5 text-slate-500"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth="2"
                   >
-                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                    File not found
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                    {localFolderStatus
-                      ? `${localFolderStatus.fileCount} file${localFolderStatus.fileCount === 1 ? "" : "s"}`
-                      : "Ready"}
-                  </span>
-                )}
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                    />
+                  </svg>
+                  Choose Folder
+                </button>
 
                 {/* Modify Folder Button */}
                 <button
@@ -1130,8 +1303,8 @@ export default function NlbReturnsPage() {
                     setFolderInput(localFolderStatus?.folder || "C:\\nlb return");
                     setIsEditingFolder(true);
                   }}
-                  className="text-slate-400 hover:text-slate-700 p-0.5 rounded transition-colors cursor-pointer ml-1"
-                  title="Modify save location path"
+                  className="text-slate-400 hover:text-slate-700 p-0.5 rounded transition-colors cursor-pointer"
+                  title="Change target directory"
                 >
                   <svg
                     className="w-3.5 h-3.5"
@@ -1154,7 +1327,7 @@ export default function NlbReturnsPage() {
                   onClick={() => checkLocalFolder(localFolderStatus?.folder)}
                   disabled={isCheckingFolder}
                   className="text-slate-400 hover:text-slate-700 p-0.5 rounded transition-colors cursor-pointer"
-                  title="Refresh local folder count"
+                  title="Re-check directory accessibility"
                 >
                   <svg
                     className={`w-3.5 h-3.5 ${isCheckingFolder ? "animate-spin text-slate-600" : ""}`}
@@ -1971,7 +2144,7 @@ function FilePreviewModal({
 
           {/* Destination Notice */}
           <div className="ml-auto text-[11px] text-slate-500 font-mono">
-            Target: <span className="font-bold text-slate-700">{data.folderPath || "C:\\nlb return"}</span>
+            Target folder: <span className="font-bold text-slate-700">{data.folderPath || "C:\\nlb return"}</span>
           </div>
         </div>
 

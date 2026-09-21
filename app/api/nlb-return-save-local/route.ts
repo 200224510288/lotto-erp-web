@@ -1,6 +1,6 @@
 // app/api/nlb-return-save-local/route.ts
 // Direct local disk writer for NLB Return files into C:\nlb return
-// Includes path validation ("File not found" if directory missing) and saves folder path to DB
+// Includes directory validation ("Folder unavailable" if directory missing or invalid) and saves folder path to DB
 
 import { NextResponse } from "next/server";
 import fs from "fs";
@@ -18,13 +18,30 @@ export async function GET(req: Request) {
       req.headers.get("x-folder") ||
       DEFAULT_RETURN_FOLDER;
 
-    // Validation: Check if the folder exists on the path - DO NOT auto-create
-    if (!fs.existsSync(targetDir)) {
+    // Check directory existence and ensure it is a DIRECTORY, not a file
+    let exists = false;
+    let isDirectory = false;
+
+    try {
+      if (fs.existsSync(targetDir)) {
+        exists = true;
+        isDirectory = fs.statSync(targetDir).isDirectory();
+      }
+    } catch {
+      exists = false;
+      isDirectory = false;
+    }
+
+    if (!exists || !isDirectory) {
       return NextResponse.json(
         {
           success: false,
-          exists: false,
-          error: `File not found: Target folder does not exist on path "${targetDir}".`,
+          exists,
+          isDirectory,
+          status: "Folder unavailable",
+          error: !exists
+            ? `Target folder does not exist: "${targetDir}"`
+            : `Path exists but is not a directory: "${targetDir}"`,
           folder: targetDir,
           fileCount: 0,
           files: [],
@@ -44,13 +61,22 @@ export async function GET(req: Request) {
     return NextResponse.json({
       success: true,
       exists: true,
+      isDirectory: true,
+      status: "Folder accessible",
       folder: targetDir,
       fileCount: files.length,
       files,
     });
   } catch (err: any) {
     return NextResponse.json(
-      { success: false, error: err.message || "Failed to inspect folder." },
+      {
+        success: false,
+        status: "Folder unavailable",
+        error: err.message || "Failed to inspect directory.",
+        folder: DEFAULT_RETURN_FOLDER,
+        fileCount: 0,
+        files: [],
+      },
       { status: 500 }
     );
   }
@@ -98,12 +124,27 @@ export async function POST(req: Request) {
       );
     }
 
-    // Validation: Verify if the folder exists on the path - DO NOT auto-create
-    if (!fs.existsSync(targetDir)) {
+    // Validation: Verify directory exists and is a directory - DO NOT auto-create
+    let exists = false;
+    let isDirectory = false;
+    try {
+      if (fs.existsSync(targetDir)) {
+        exists = true;
+        isDirectory = fs.statSync(targetDir).isDirectory();
+      }
+    } catch {
+      exists = false;
+      isDirectory = false;
+    }
+
+    if (!exists || !isDirectory) {
       return NextResponse.json(
         {
           success: false,
-          error: `File not found: Target folder does not exist on path "${targetDir}".`,
+          status: "Folder unavailable",
+          error: !exists
+            ? `Target folder does not exist: "${targetDir}"`
+            : `Target path is not a directory: "${targetDir}"`,
           folder: targetDir,
         },
         { status: 404 }
@@ -139,6 +180,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
+      status: "Folder accessible",
+      isDirectory: true,
       message: `Saved successfully to ${targetFile}`,
       path: targetFile,
       folder: targetDir,

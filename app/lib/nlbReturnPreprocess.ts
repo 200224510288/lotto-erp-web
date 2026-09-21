@@ -80,7 +80,7 @@ export type Cell = string | number | boolean | null | undefined;
  */
 export function validateReturnFilename(
   filename: string
-): { valid: boolean; code: string | null; error: string | null } {
+): { valid: boolean; code: string | null; rawCode?: string; error: string | null } {
   if (!filename || typeof filename !== "string") {
     return { valid: false, code: null, error: "No filename provided." };
   }
@@ -112,7 +112,7 @@ export function validateReturnFilename(
   const normalizedCode = RETURN_CODE_ALIASES[rawCode];
 
   if (normalizedCode && (ALLOWED_RETURN_CODES as readonly string[]).includes(normalizedCode)) {
-    return { valid: true, code: normalizedCode, error: null };
+    return { valid: true, code: normalizedCode, rawCode, error: null };
   }
 
   return { valid: false, code: null, error: INVALID_RETURN_FILENAME_ERROR };
