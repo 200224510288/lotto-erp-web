@@ -1073,22 +1073,10 @@ export default function NlbPreprocessPage() {
 
           <div className="flex items-center gap-2">
             <Link
-              href="/"
-              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs transition-colors"
+              href="/nlb-returns"
+              className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
             >
-              ← DLB Sales
-            </Link>
-            <Link
-              href="/returns"
-              className="px-3 py-1.5 rounded-lg bg-purple-700 hover:bg-purple-800 text-white text-xs font-semibold shadow-xs transition-colors"
-            >
-              Returns
-            </Link>
-            <Link
-              href="/return-analysis"
-              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors"
-            >
-              Analyzer
+              NLB Returns →
             </Link>
           </div>
         </div>
