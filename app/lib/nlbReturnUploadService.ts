@@ -4,6 +4,8 @@ import {
   collection,
   addDoc,
   getDocs,
+  getDoc,
+  setDoc,
   query,
   where,
   deleteDoc,
@@ -28,6 +30,8 @@ export type NlbReturnFileRecord = {
   downloadUrl: string;
   size: number; // bytes
   storagePath: string;
+  folderPath?: string;
+  localFolderPath?: string;
   createdAt?: Timestamp;
 };
 
@@ -38,6 +42,7 @@ const RETURN_STORAGE_ROOT = "nlb-returns";
  * Save a cleaned NLB Agent Return Excel file to Firebase:
  * - Stored in dedicated Storage: `nlb-returns/${date}/...`
  * - Stored in dedicated Firestore collection: `nlb_return_uploads`
+ * - Records destination folderPath in Firestore document
  */
 export async function saveNlbReturnFile(
   blob: Blob,
@@ -46,7 +51,8 @@ export async function saveNlbReturnFile(
   drawNumber: string,
   rowCount: number,
   totalReturnQuantity: number,
-  uploadDate: string
+  uploadDate: string,
+  folderPath: string = "C:\\nlb return"
 ): Promise<NlbReturnFileRecord> {
   const safeDate = uploadDate || new Date().toISOString().slice(0, 10);
 
@@ -70,7 +76,7 @@ export async function saveNlbReturnFile(
   await uploadBytes(storageRef, blob);
   const downloadUrl = await getDownloadURL(storageRef);
 
-  // 3. Store metadata
+  // 3. Store metadata including folder path
   const meta = {
     fileName,
     code: code.toUpperCase(),
@@ -81,10 +87,19 @@ export async function saveNlbReturnFile(
     downloadUrl,
     size: blob.size,
     storagePath,
+    folderPath: folderPath || "C:\\nlb return",
+    localFolderPath: folderPath || "C:\\nlb return",
     createdAt: Timestamp.now(),
   };
 
   const docRef = await addDoc(collection(db, RETURN_COLLECTION), meta);
+
+  // Also keep the configured folder path updated in nlb_settings
+  try {
+    await saveReturnFolderPathToDb(folderPath || "C:\\nlb return");
+  } catch {
+    // Non-fatal
+  }
 
   return {
     id: docRef.id,
@@ -117,6 +132,8 @@ export async function listNlbReturnFilesByDate(
       downloadUrl: data.downloadUrl,
       size: data.size,
       storagePath: data.storagePath,
+      folderPath: data.folderPath || data.localFolderPath || "C:\\nlb return",
+      localFolderPath: data.localFolderPath || data.folderPath || "C:\\nlb return",
       createdAt: data.createdAt,
     };
   });
@@ -135,4 +152,33 @@ export async function deleteNlbReturnUploadedFile(
     // Non-fatal if storage file already removed
   }
   await deleteDoc(doc(db, RETURN_COLLECTION, record.id));
+}
+
+/**
+ * Save target folder path to DB (Firestore nlb_settings/return_folder)
+ */
+export async function saveReturnFolderPathToDb(folderPath: string): Promise<void> {
+  await setDoc(
+    doc(db, "nlb_settings", "return_folder"),
+    {
+      folderPath,
+      updatedAt: Timestamp.now(),
+    },
+    { merge: true }
+  );
+}
+
+/**
+ * Retrieve target folder path from DB
+ */
+export async function getReturnFolderPathFromDb(): Promise<string | null> {
+  try {
+    const snap = await getDoc(doc(db, "nlb_settings", "return_folder"));
+    if (snap.exists()) {
+      return snap.data()?.folderPath || null;
+    }
+  } catch (err) {
+    console.warn("Failed to fetch return folder from DB:", err);
+  }
+  return null;
 }

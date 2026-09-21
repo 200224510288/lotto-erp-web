@@ -1,18 +1,38 @@
 // app/api/nlb-return-save-local/route.ts
 // Direct local disk writer for NLB Return files into C:\nlb return
+// Includes path validation ("File not found" if directory missing) and saves folder path to DB
 
 import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { db } from "@/app/lib/firebase";
+import { doc, setDoc, addDoc, collection, Timestamp } from "firebase/firestore";
 
 const DEFAULT_RETURN_FOLDER = "C:\\nlb return";
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const targetDir = DEFAULT_RETURN_FOLDER;
+    const url = new URL(req.url);
+    const targetDir =
+      url.searchParams.get("folder") ||
+      req.headers.get("x-folder") ||
+      DEFAULT_RETURN_FOLDER;
+
+    // Validation: Check if the folder exists on the path - DO NOT auto-create
     if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
+      return NextResponse.json(
+        {
+          success: false,
+          exists: false,
+          error: `File not found: Target folder does not exist on path "${targetDir}".`,
+          folder: targetDir,
+          fileCount: 0,
+          files: [],
+        },
+        { status: 404 }
+      );
     }
+
     const files = fs.readdirSync(targetDir).filter((f) => {
       try {
         return fs.statSync(path.join(targetDir, f)).isFile();
@@ -20,8 +40,10 @@ export async function GET() {
         return false;
       }
     });
+
     return NextResponse.json({
       success: true,
+      exists: true,
       folder: targetDir,
       fileCount: files.length,
       files,
@@ -39,6 +61,10 @@ export async function POST(req: Request) {
     const url = new URL(req.url);
     const queryFilename = url.searchParams.get("filename");
     const headerFilename = req.headers.get("x-filename");
+    const targetDir =
+      url.searchParams.get("folder") ||
+      req.headers.get("x-folder") ||
+      DEFAULT_RETURN_FOLDER;
 
     const contentType = req.headers.get("content-type") || "";
 
@@ -72,22 +98,51 @@ export async function POST(req: Request) {
       );
     }
 
-    // Ensure target folder exists: C:\nlb return
-    const targetDir = DEFAULT_RETURN_FOLDER;
+    // Validation: Verify if the folder exists on the path - DO NOT auto-create
     if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
+      return NextResponse.json(
+        {
+          success: false,
+          error: `File not found: Target folder does not exist on path "${targetDir}".`,
+          folder: targetDir,
+        },
+        { status: 404 }
+      );
     }
 
     const targetFile = path.join(targetDir, filename);
 
-    // Write file directly to C:\nlb return\<filename>
+    // Write file directly to target directory
     fs.writeFileSync(targetFile, buffer);
+
+    // Save folder path & local save record in Firestore DB
+    try {
+      await setDoc(
+        doc(db, "nlb_settings", "return_folder"),
+        {
+          folderPath: targetDir,
+          updatedAt: Timestamp.now(),
+        },
+        { merge: true }
+      );
+
+      await addDoc(collection(db, "nlb_return_local_saves"), {
+        fileName: filename,
+        folderPath: targetDir,
+        fullPath: targetFile,
+        size: buffer.length,
+        savedAt: Timestamp.now(),
+      });
+    } catch (dbErr) {
+      console.warn("Could not record local save in DB:", dbErr);
+    }
 
     return NextResponse.json({
       success: true,
       message: `Saved successfully to ${targetFile}`,
       path: targetFile,
       folder: targetDir,
+      folderPath: targetDir,
       filename,
     });
   } catch (error: any) {
