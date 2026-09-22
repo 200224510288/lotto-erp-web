@@ -7,6 +7,7 @@ import {
   preprocessReturnSheet,
 } from "../../lib/nlbReturnPreprocess";
 import type { ReturnPreprocessResult } from "../../lib/nlbReturnPreprocess";
+import { getNlbAgentAliases } from "../../lib/nlbAgentConfig";
 
 export async function POST(req: Request) {
   try {
@@ -69,7 +70,13 @@ export async function POST(req: Request) {
     }
 
     // 3. Run return preprocessing pipeline
-    const result = preprocessReturnSheet(data, validation.code);
+    let aliases: Record<string, string> = {};
+    try {
+      aliases = await getNlbAgentAliases();
+    } catch (err) {
+      console.error("Could not fetch NLB agent aliases for returns:", err);
+    }
+    const result = preprocessReturnSheet(data, validation.code, aliases);
     return Response.json(result);
   } catch (err: unknown) {
     const message =

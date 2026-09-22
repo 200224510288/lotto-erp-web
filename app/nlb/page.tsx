@@ -8,6 +8,8 @@ import {
   ALLOWED_CODES,
   validateFilename,
   generatePurchaseXlsx,
+  normalizeAgentCode,
+  applyNlbAgentMapping,
 } from "../lib/nlbPreprocess";
 import type {
   PreprocessResult,
@@ -24,6 +26,9 @@ import {
   deleteNlbUploadedFile,
 } from "../lib/nlbUploadService";
 import type { NlbUploadedFileRecord } from "../lib/nlbUploadService";
+import NlbMasterAgentEditor from "../components/NlbMasterAgentEditor";
+import NlbAgentAliasEditor from "../components/NlbAgentAliasEditor";
+import { getNlbAgentAliases } from "../lib/nlbAgentConfig";
 
 /* =====================================================
    TYPES
@@ -93,6 +98,93 @@ function generateCleanedXlsx(rows: ProcessedRow[]): Blob {
   return new Blob([wbout], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
+}
+
+/* =====================================================
+   RE-PROCESS SAVED SALES FILE WITH AGENT MAPPING
+   ===================================================== */
+
+async function processSavedSalesBlobWithAliases(
+  blob: Blob,
+  aliases?: Record<string, string>
+): Promise<{ blob: Blob; rows: ProcessedRow[] }> {
+  try {
+    const ab = await blob.arrayBuffer();
+    const wb = XLSX.read(ab, { type: "array" });
+    if (!wb.SheetNames || wb.SheetNames.length === 0) {
+      return { blob, rows: [] };
+    }
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      raw: true,
+      defval: null,
+    }) as (string | number | boolean | null)[][];
+
+    if (!data || data.length === 0) {
+      return { blob, rows: [] };
+    }
+
+    // Default 4-column layout: [drawNumber, agentCode, startingBarcode, quantity]
+    let drawCol = 0;
+    let agentCol = 1;
+    let barcodeCol = 2;
+    let qtyCol = 3;
+
+    // Detect header row if present
+    const headerRow = data[0] || [];
+    const headerStrings = headerRow.map((c) => String(c ?? "").toLowerCase());
+    const aIdx = headerStrings.findIndex((h) => h.includes("agent"));
+    const dIdx = headerStrings.findIndex((h) => h.includes("draw"));
+    const bIdx = headerStrings.findIndex(
+      (h) => h.includes("barcode") || h.includes("start") || h.includes("from")
+    );
+    const qIdx = headerStrings.findIndex(
+      (h) => h.includes("qty") || h.includes("quantity")
+    );
+
+    if (aIdx !== -1) agentCol = aIdx;
+    if (dIdx !== -1) drawCol = dIdx;
+    if (bIdx !== -1) barcodeCol = bIdx;
+    if (qIdx !== -1) qtyCol = qIdx;
+
+    const rows: ProcessedRow[] = [];
+    const startRow = aIdx !== -1 || dIdx !== -1 ? 1 : 0;
+
+    for (let i = startRow; i < data.length; i++) {
+      const row = data[i];
+      if (!row || row.length === 0) continue;
+      const rawAgent = String(row[agentCol] ?? "").trim();
+      if (!rawAgent || rawAgent.toLowerCase().includes("total")) continue;
+
+      const agentResult = normalizeAgentCode(rawAgent);
+      const normalizedAgent = agentResult.valid ? agentResult.normalized : rawAgent;
+      const mappedAgent = aliases
+        ? applyNlbAgentMapping(normalizedAgent, aliases)
+        : normalizedAgent;
+
+      const startingBarcode = String(row[barcodeCol] ?? "").trim();
+      const rawQty = Number(row[qtyCol] ?? 0);
+      const drawNumber = String(row[drawCol] ?? "").trim();
+
+      rows.push({
+        drawNumber,
+        agentCode: mappedAgent,
+        startingBarcode,
+        quantity: Number.isNaN(rawQty) ? 0 : rawQty,
+      });
+    }
+
+    if (rows.length > 0) {
+      const newBlob = generateCleanedXlsx(rows);
+      return { blob: newBlob, rows };
+    }
+
+    return { blob, rows: [] };
+  } catch (err) {
+    console.error("Failed to re-process saved sales file with agent mapping:", err);
+    return { blob, rows: [] };
+  }
 }
 
 /* =====================================================
@@ -859,23 +951,27 @@ export default function NlbPreprocessPage() {
           ...navProps,
         });
       } else {
-        const rows: ProcessedRow[] = [];
-        for (let i = 1; i < data.length; i++) {
-          const row = data[i];
-          if (!row || row.length < 4) continue;
-          rows.push({
-            drawNumber: String(row[0]),
-            agentCode: String(row[1]),
-            startingBarcode: String(row[2]),
-            quantity: Number(row[3]),
-          });
+        const aliases = await getNlbAgentAliases().catch(() => ({}));
+        const processed = await processSavedSalesBlobWithAliases(blob, aliases);
+        const finalRows: ProcessedRow[] = processed.rows.length > 0 ? processed.rows : [];
+        if (finalRows.length === 0) {
+          for (let i = 1; i < data.length; i++) {
+            const row = data[i];
+            if (!row || row.length < 4) continue;
+            finalRows.push({
+              drawNumber: String(row[0]),
+              agentCode: String(row[1]),
+              startingBarcode: String(row[2]),
+              quantity: Number(row[3]),
+            });
+          }
         }
         setPreviewModal({
           title: rec.fileName,
           code: rec.code,
           reportType: "sales_summary",
           drawNumber: rec.drawNumber || "-",
-          salesRows: rows,
+          salesRows: finalRows,
           onDownload: () => handleDownloadSingleSaved(rec),
           onDelete,
           isSaved: true,
@@ -894,7 +990,14 @@ export default function NlbPreprocessPage() {
 
   async function handleDownloadSingleSaved(rec: NlbUploadedFileRecord) {
     try {
-      const blob = await fetchFileBlobFromUrl(rec.downloadUrl);
+      let blob = await fetchFileBlobFromUrl(rec.downloadUrl);
+      if (rec.reportType !== "purchase_range") {
+        const aliases = await getNlbAgentAliases().catch(() => ({}));
+        const processed = await processSavedSalesBlobWithAliases(blob, aliases);
+        if (processed.rows.length > 0) {
+          blob = processed.blob;
+        }
+      }
       await triggerDownload(blob, rec.fileName);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error downloading file.";
@@ -908,9 +1011,14 @@ export default function NlbPreprocessPage() {
 
     setIsDownloadingSelected(true);
     try {
+      const aliases = await getNlbAgentAliases().catch(() => ({}));
       const filesToSave: { name: string; blob: Blob }[] = [];
       for (const rec of recordsToDownload) {
-        const blob = await fetchFileBlobFromUrl(rec.downloadUrl);
+        let blob = await fetchFileBlobFromUrl(rec.downloadUrl);
+        const processed = await processSavedSalesBlobWithAliases(blob, aliases);
+        if (processed.rows.length > 0) {
+          blob = processed.blob;
+        }
         filesToSave.push({ name: rec.fileName, blob });
       }
 
@@ -1120,6 +1228,27 @@ export default function NlbPreprocessPage() {
             {selectedDate}
           </span>
         </div>
+
+        {/* =====================================================
+            AGENT MAPPING CONFIGURATION (NLB SPECIFIC)
+            ===================================================== */}
+        <section className="border border-gray-200 rounded-xl p-5 bg-gray-50/70 space-y-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-slate-700"></span>
+              <h2 className="text-sm font-bold text-gray-900">
+                NLB Agent Mapping Configuration
+              </h2>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Configure how NLB agent codes are normalized. Alias agent codes are automatically mapped to their primary agent code during file preprocessing and export.
+            </p>
+          </div>
+          <div className="space-y-3">
+            <NlbMasterAgentEditor />
+            <NlbAgentAliasEditor />
+          </div>
+        </section>
 
         {/* =====================================================
             SECTION 1: SALES ALLOCATION FILES

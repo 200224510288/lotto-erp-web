@@ -438,9 +438,37 @@ function checkContinuity(rows: ProcessedRow[]): string[] {
    MAIN PREPROCESSING FUNCTION
    ===================================================== */
 
+export function applyNlbAgentMapping(
+  agentCode: string,
+  aliases?: Record<string, string>
+): string {
+  if (!agentCode || !aliases) return agentCode;
+  const raw = agentCode.trim().toUpperCase();
+  const digits = raw.replace(/[^\d]/g, "");
+
+  // 1. Direct match
+  if (aliases[raw]) return aliases[raw];
+
+  // 2. Normalized N + 6 digits match
+  if (digits) {
+    const nForm = "N" + digits.padStart(6, "0");
+    if (aliases[nForm]) return aliases[nForm];
+
+    // 3. Raw 6 digits match
+    const dForm = digits.padStart(6, "0");
+    if (aliases[dForm]) return aliases[dForm];
+
+    // 4. Raw unpadded digits
+    if (aliases[digits]) return aliases[digits];
+  }
+
+  return agentCode;
+}
+
 export function preprocessRawSheet(
   data: Cell[][],
-  code: string
+  code: string,
+  agentAliases?: Record<string, string>
 ): PreprocessResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -522,9 +550,13 @@ export function preprocessRawSheet(
       continue;
     }
 
+    const mappedAgentCode = agentAliases
+      ? applyNlbAgentMapping(agentResult.normalized, agentAliases)
+      : agentResult.normalized;
+
     processedRows.push({
       drawNumber,
-      agentCode: agentResult.normalized,
+      agentCode: mappedAgentCode,
       startingBarcode: parsed.fromBarcode,
       quantity: qtyResult.quantity,
     });

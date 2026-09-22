@@ -8,6 +8,7 @@ import {
   preprocessPurchaseSheet,
 } from "../../lib/nlbPreprocess";
 import type { PreprocessResult } from "../../lib/nlbPreprocess";
+import { getNlbAgentAliases } from "../../lib/nlbAgentConfig";
 
 export async function POST(req: Request) {
   try {
@@ -71,7 +72,13 @@ export async function POST(req: Request) {
       const result = preprocessPurchaseSheet(data, validation.code);
       return Response.json(result);
     } else {
-      const result = preprocessRawSheet(data, validation.code);
+      let aliases: Record<string, string> = {};
+      try {
+        aliases = await getNlbAgentAliases();
+      } catch (err) {
+        console.error("Could not fetch NLB agent aliases:", err);
+      }
+      const result = preprocessRawSheet(data, validation.code, aliases);
       return Response.json({ ...result, reportType: "sales_summary" });
     }
   } catch (err: unknown) {

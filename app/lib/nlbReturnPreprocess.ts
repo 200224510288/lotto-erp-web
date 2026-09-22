@@ -2,6 +2,7 @@
 // Authoritative engine for NLB Agent Return reports
 
 import * as XLSX from "xlsx";
+import { applyNlbAgentMapping } from "./nlbPreprocess";
 
 /* =====================================================
    CONSTANTS & TYPES
@@ -488,7 +489,8 @@ export function extractReturnBarcodeRanges(
  */
 export function preprocessReturnSheet(
   data: Cell[][],
-  code: string
+  code: string,
+  agentAliases?: Record<string, string>
 ): ReturnPreprocessResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -581,10 +583,14 @@ export function preprocessReturnSheet(
 
     totalReturnQuantity += qtyResult.quantity;
 
+    const mappedAgentCode = agentAliases
+      ? applyNlbAgentMapping(agentResult.normalized, agentAliases)
+      : agentResult.normalized;
+
     // DO NOT merge multiple returns for the same agent — keep each allocation separate!
     processedRows.push({
       drawNumber,
-      agentCode: agentResult.normalized,
+      agentCode: mappedAgentCode,
       startingBarcode: raw.fromBarcode, // Treated strictly as text
       quantity: qtyResult.quantity,
     });
