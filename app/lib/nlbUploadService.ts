@@ -16,6 +16,7 @@ import {
   getDownloadURL,
   deleteObject,
 } from "firebase/storage";
+import { validateFileData } from "./fileValidation";
 
 export type NlbUploadedFileRecord = {
   id: string;
@@ -54,9 +55,17 @@ export async function saveNlbCleanedFile(
   code: string,
   drawNumber: string,
   rowCount: number,
-  uploadDate: string
+  uploadDate: string,
+  rawFile?: File | Blob
 ): Promise<NlbUploadedFileRecord> {
   const safeDate = uploadDate || new Date().toISOString().slice(0, 10);
+
+  // Validate spreadsheet type before ANY storage or database writes
+  const fileToValidate = rawFile || blob;
+  const validation = await validateFileData(fileToValidate, "sales");
+  if (!validation.isValid) {
+    throw new Error(validation.error || "File validation failed.");
+  }
 
   // 1. Check & delete prior file for the same lottery code on this date
   try {

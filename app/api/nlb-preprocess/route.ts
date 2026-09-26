@@ -9,6 +9,7 @@ import {
 } from "../../lib/nlbPreprocess";
 import type { PreprocessResult } from "../../lib/nlbPreprocess";
 import { getNlbAgentAliases } from "../../lib/nlbAgentConfig";
+import { validateFileData } from "../../lib/fileValidation";
 
 export async function POST(req: Request) {
   try {
@@ -67,11 +68,25 @@ export async function POST(req: Request) {
       );
     }
 
-    // 3. Preprocess (Auto-detect report type)
+    // 3. Preprocess (Auto-detect report type & validate format)
+    const fileValidation = await validateFileData(workbook, "sales");
+    if (fileValidation.detectedType === "return") {
+      return Response.json(
+        { error: fileValidation.error } as Record<string, unknown>,
+        { status: 400 }
+      );
+    }
+
     if (isPurchaseReportSheet(data)) {
       const result = preprocessPurchaseSheet(data, validation.code);
       return Response.json(result);
     } else {
+      if (!fileValidation.isValid) {
+        return Response.json(
+          { error: fileValidation.error } as Record<string, unknown>,
+          { status: 400 }
+        );
+      }
       let aliases: Record<string, string> = {};
       try {
         aliases = await getNlbAgentAliases();

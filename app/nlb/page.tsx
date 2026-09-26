@@ -29,6 +29,7 @@ import type { NlbUploadedFileRecord } from "../lib/nlbUploadService";
 import NlbMasterAgentEditor from "../components/NlbMasterAgentEditor";
 import NlbAgentAliasEditor from "../components/NlbAgentAliasEditor";
 import { getNlbAgentAliases } from "../lib/nlbAgentConfig";
+import { validateFileData } from "../lib/fileValidation";
 
 /* =====================================================
    TYPES
@@ -419,13 +420,20 @@ export default function NlbPreprocessPage() {
     []
   );
 
-  function addSalesFiles(incoming: File[]) {
+  async function addSalesFiles(incoming: File[]) {
     const errs: string[] = [];
     const accepted: FileEntry[] = [];
 
     for (const file of incoming) {
       if (!/\.(xlsx?)$/i.test(file.name)) {
         errs.push(`"${file.name}": Only .xls and .xlsx files are allowed.`);
+        continue;
+      }
+
+      // Check spreadsheet type before importing
+      const fileCheck = await validateFileData(file, "sales");
+      if (!fileCheck.isValid) {
+        errs.push(fileCheck.error || `Invalid format: "${file.name}"`);
         continue;
       }
 
@@ -471,6 +479,15 @@ export default function NlbPreprocessPage() {
       updateSalesEntry(entry.id, { status: "processing", errorMessage: null });
 
       try {
+        const val = await validateFileData(entry.file, "sales");
+        if (!val.isValid) {
+          updateSalesEntry(entry.id, {
+            status: "failed",
+            errorMessage: val.error,
+          });
+          continue;
+        }
+
         const formData = new FormData();
         formData.append("file", entry.file);
 
@@ -694,7 +711,8 @@ export default function NlbPreprocessPage() {
           rawCode,
           sr.drawNumber || "",
           sr.rowCount,
-          selectedDate
+          selectedDate,
+          entry.file
         );
       }
 
@@ -760,7 +778,8 @@ export default function NlbPreprocessPage() {
             rawCode,
             sr.drawNumber || "",
             sr.rowCount,
-            selectedDate
+            selectedDate,
+            entry.file
           );
           updateSalesEntry(entry.id, { isSavedToFirebase: true });
           hasSales = true;

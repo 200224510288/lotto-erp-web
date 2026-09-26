@@ -23,6 +23,7 @@ import {
   saveReturnFolderPathToDb,
 } from "../lib/nlbReturnUploadService";
 import type { NlbReturnFileRecord } from "../lib/nlbReturnUploadService";
+import { validateFileData } from "../lib/fileValidation";
 
 /* =====================================================
    TYPES
@@ -521,11 +522,18 @@ export default function NlbReturnsPage() {
 
   /* ---- Add Return Files with Validation & Duplicate Prevention ---- */
   const addReturnFiles = useCallback(
-    (files: File[]) => {
+    async (files: File[]) => {
       const newEntries: ReturnFileEntry[] = [];
       const errors: string[] = [];
 
       for (const file of files) {
+        // Detect spreadsheet type before importing
+        const fileCheck = await validateFileData(file, "return");
+        if (!fileCheck.isValid) {
+          errors.push(fileCheck.error || `Invalid return format: "${file.name}"`);
+          continue;
+        }
+
         const val = validateReturnFilename(file.name);
         if (!val.valid || !val.code) {
           errors.push(
@@ -578,6 +586,12 @@ export default function NlbReturnsPage() {
     updateReturnEntry(entry.id, { status: "processing", errorMessage: null });
 
     try {
+      const val = await validateFileData(entry.file, "return");
+      if (!val.isValid) {
+        updateReturnEntry(entry.id, { status: "failed", errorMessage: val.error });
+        return null;
+      }
+
       const formData = new FormData();
       formData.append("file", entry.file);
 
@@ -905,7 +919,8 @@ export default function NlbReturnsPage() {
         entry.result.rowCount,
         entry.result.totalReturnQuantity,
         selectedDate,
-        targetFolder
+        targetFolder,
+        entry.file
       );
       updateReturnEntry(entry.id, { isSavedToFirebase: true });
       notifySaveSuccess(
@@ -939,7 +954,8 @@ export default function NlbReturnsPage() {
           entry.result.rowCount,
           entry.result.totalReturnQuantity,
           selectedDate,
-          targetFolder
+          targetFolder,
+          entry.file
         );
         updateReturnEntry(entry.id, { isSavedToFirebase: true });
         saved++;

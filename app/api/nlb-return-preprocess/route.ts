@@ -8,6 +8,7 @@ import {
 } from "../../lib/nlbReturnPreprocess";
 import type { ReturnPreprocessResult } from "../../lib/nlbReturnPreprocess";
 import { getNlbAgentAliases } from "../../lib/nlbAgentConfig";
+import { validateFileData } from "../../lib/fileValidation";
 
 export async function POST(req: Request) {
   try {
@@ -69,7 +70,16 @@ export async function POST(req: Request) {
       );
     }
 
-    // 3. Run return preprocessing pipeline
+    // 3. Authoritative spreadsheet format validation
+    const fileValidation = await validateFileData(workbook, "return");
+    if (!fileValidation.isValid) {
+      return Response.json(
+        { error: fileValidation.error } as Record<string, unknown>,
+        { status: 400 }
+      );
+    }
+
+    // 4. Run return preprocessing pipeline
     let aliases: Record<string, string> = {};
     try {
       aliases = await getNlbAgentAliases();

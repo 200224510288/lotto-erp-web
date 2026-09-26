@@ -18,6 +18,7 @@ import {
   getDownloadURL,
   deleteObject,
 } from "firebase/storage";
+import { validateFileData } from "./fileValidation";
 
 export type NlbReturnFileRecord = {
   id: string;
@@ -52,9 +53,17 @@ export async function saveNlbReturnFile(
   rowCount: number,
   totalReturnQuantity: number,
   uploadDate: string,
-  folderPath: string = "C:\\nlb return"
+  folderPath: string = "C:\\nlb return",
+  rawFile?: File | Blob
 ): Promise<NlbReturnFileRecord> {
   const safeDate = uploadDate || new Date().toISOString().slice(0, 10);
+
+  // Validate spreadsheet type before ANY storage or database writes
+  const fileToValidate = rawFile || blob;
+  const validation = await validateFileData(fileToValidate, "return");
+  if (!validation.isValid) {
+    throw new Error(validation.error || "File validation failed.");
+  }
 
   // 1. Delete prior file for the same lottery code on this date
   try {
