@@ -26,9 +26,11 @@ import type {
 import {
   UploadedFileRecord,
   saveUploadedFile,
+  saveUploadedFilesAtomic,
   listUploadedFilesByDate,
   deleteUploadedFile,
 } from "./lib/uploadService";
+import { validateFileData } from "./lib/fileValidation";
 
 import DealerAliasEditor from "./components/DealerAliasEditor";
 import MasterDealerEditor from "./components/MasterDealerEditor";
@@ -345,8 +347,9 @@ export default function HomePage() {
   if (!user) return null;
 
   // ------------- File selection -------------
-  function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
+  async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const inputEl = e.target;
+    const files = inputEl.files;
 
     if (!files || files.length === 0) {
       setFileConfigs([]);
@@ -356,6 +359,23 @@ export default function HomePage() {
       setDownloadBlob(null);
       setError(null);
       return;
+    }
+
+    // Inspect the Summary sheet before importing records into configuration
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const validation = await validateFileData(f, "sales");
+      if (!validation.isValid) {
+        setError(validation.error);
+        inputEl.value = "";
+        setFileConfigs([]);
+        setPreviewTable([]);
+        setPreviewLabel("");
+        setStructured([]);
+        setDownloadBlob(null);
+        setShowPostUploadActionModal(false);
+        return;
+      }
     }
 
     const now = Date.now();
@@ -459,6 +479,13 @@ export default function HomePage() {
       setError(null);
       setSavingFileId(cfg.id);
 
+      // Validate Summary sheet before database writes
+      const validation = await validateFileData(cfg.file, "sales");
+      if (!validation.isValid) {
+        setError(validation.error);
+        return;
+      }
+
       await saveUploadedFile(cfg.file, cfg.gameId, cfg.gameId, selectedDate);
 
       await loadUploads(selectedDate);
@@ -486,6 +513,15 @@ export default function HomePage() {
       return;
     }
 
+    // Strict pre-validation of all files before ANY database/storage writes
+    for (const cfg of validConfigs) {
+      const validation = await validateFileData(cfg.file, "sales");
+      if (!validation.isValid) {
+        setError(validation.error);
+        return;
+      }
+    }
+
     setIsSavingAll(true);
     setError(null);
 
@@ -500,10 +536,16 @@ export default function HomePage() {
         }
       }
 
-      for (const cfg of validConfigs) {
-        setSavingFileId(cfg.id);
-        await saveUploadedFile(cfg.file, cfg.gameId, cfg.gameId, selectedDate);
-      }
+      // Atomic batch save with automatic rollback on partial failure
+      await saveUploadedFilesAtomic(
+        validConfigs.map((cfg) => ({
+          file: cfg.file,
+          gameId: cfg.gameId,
+          gameName: cfg.gameId,
+        })),
+        selectedDate
+      );
+
       await loadUploads(selectedDate);
       setShowRobotInstructionsModal(true);
     } catch (err: unknown) {
@@ -689,6 +731,11 @@ export default function HomePage() {
     }
 
     for (const cfg of fileConfigs) {
+      const validation = await validateFileData(cfg.file, "sales");
+      if (!validation.isValid) {
+        setError(validation.error);
+        return;
+      }
       if (!cfg.isConfirmed) {
         setError(`Please confirm configuration for all files before processing.`);
         return;

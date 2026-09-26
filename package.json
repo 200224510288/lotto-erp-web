@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "npx tsx scripts/test_upload_validation_suite.mts",
+    "test:validation": "npx tsx scripts/test_upload_validation_suite.mts"
   },
   "dependencies": {
     "firebase": "^12.6.0",

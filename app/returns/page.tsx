@@ -1,14 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 
 import {
   buildReturnRows,
   Cell,
   ReturnRow,
-  V1ExistingRow,
   renderCell,
 } from "../lib/returnTransformer";
 
@@ -18,9 +17,11 @@ import DealerAliasEditor from "../components/DealerAliasEditor";
 import {
   ReturnUploadedFileRecord,
   saveReturnUploadedFile,
+  saveReturnUploadedFilesAtomic,
   listReturnUploadedFilesByDate,
   deleteReturnUploadedFile,
 } from "../lib/returnUploadService";
+import { validateFileData } from "../lib/fileValidation";
 
 
 
@@ -59,106 +60,6 @@ async function readFirstSheet(file: File): Promise<Cell[][]> {
   return normalizeSheetToCells(rawData);
 }
 
-/**
- * Parse V1 table into exclusion rows.
- * Expected V1 formats (flexible):
- * - DealerCode | From | To
- * - DealerCode | From | Qty
- * - DealerCode | Game | Draw | From | To
- * - DealerCode | Game | Draw | From | Qty
- */
-function toDigits(value: Cell): string {
-  if (value == null) return "";
-  if (typeof value === "number") return String(Math.trunc(value));
-  const raw = String(value).trim();
-  if (!raw) return "";
-  if (/e/i.test(raw)) {
-    const n = Number(raw);
-    if (!Number.isNaN(n)) return String(Math.trunc(n));
-  }
-  return raw.replace(/[^\d]/g, "");
-}
-
-function detectDealerCodeInRow(row: Cell[]): string | null {
-  for (const cell of row) {
-    const d = toDigits(cell);
-    if (d.length === 5 || d.length === 6) return d;
-  }
-  return null;
-}
-
-function detectTwoSerials(row: Cell[]): { from: string | null; to: string | null } {
-  let first: string | null = null;
-  let second: string | null = null;
-
-  for (const cell of row) {
-    const d = toDigits(cell);
-    if (d.length >= 7) {
-      if (!first) first = d;
-      else {
-        second = d;
-        break;
-      }
-    }
-  }
-  return { from: first, to: second };
-}
-
-function detectQtyInRow(row: Cell[]): number | null {
-  for (let i = row.length - 1; i >= 0; i--) {
-    const d = toDigits(row[i]);
-    if (d.length > 0 && d.length <= 5) {
-      const n = Number(d);
-      if (!Number.isNaN(n)) return n;
-    }
-  }
-  return null;
-}
-
-function detectGameDrawFromRow(row: Cell[]): { game?: string; draw?: string } {
-  let game: string | undefined;
-  let draw: string | undefined;
-
-  for (const cell of row) {
-    if (typeof cell === "string") {
-      const s = cell.trim();
-      if (!game && /^[A-Za-z]{2,5}$/.test(s)) game = s.toUpperCase();
-      if (!draw && /^\d{2}\/\d{2}\/\d{4}$/.test(s)) draw = s;
-    }
-  }
-  return { game, draw };
-}
-
-function parseV1FromSheet(sheet: Cell[][]): V1ExistingRow[] {
-  const out: V1ExistingRow[] = [];
-
-  for (const row of sheet) {
-    if (row.every((c) => c == null || String(c).trim() === "")) continue;
-
-    const dealer = detectDealerCodeInRow(row);
-    const { from, to } = detectTwoSerials(row);
-    const qty = detectQtyInRow(row);
-    const { game, draw } = detectGameDrawFromRow(row);
-
-    if (!dealer || !from) continue;
-
-    const rec: V1ExistingRow = {
-      DealerCode: dealer,
-      From: from,
-    };
-
-    if (to) rec.To = to;
-    else if (qty != null) rec.Qty = qty;
-
-    if (game) rec.Game = game;
-    if (draw) rec.Draw = draw;
-
-    out.push(rec);
-  }
-
-  return out;
-}
-
 /* =============================================================
    PAGE TYPES
    ============================================================= */
@@ -181,17 +82,6 @@ type ReturnFileConfig = {
   autoDetectedGameId: string | null;
   autoDetectNote: string | null;
   autoDetectStatus: "ok" | "mismatch_day" | "ambiguous" | "not_found";
-
-  // ✅ per-file optional V1 selection
-  v1Id: string | null;
-  strictMatchGameDraw: boolean;
-};
-
-type V1FileBundle = {
-  id: string;
-  fileName: string;
-  rows: V1ExistingRow[];
-  error: string | null;
 };
 
 export default function ReturnsPage() {
@@ -216,12 +106,11 @@ export default function ReturnsPage() {
   const [uploadsLoading, setUploadsLoading] = useState(false);
   const [uploadsError, setUploadsError] = useState<string | null>(null);
   const [savingFileId, setSavingFileId] = useState<string | null>(null);
+  const [isSavingAll, setIsSavingAll] = useState(false);
+  const [showDeleteOldFilesModal, setShowDeleteOldFilesModal] = useState(false);
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [deletingUploadId, setDeletingUploadId] = useState<string | null>(null);
   const [isLoadingAllIntoProcessor, setIsLoadingAllIntoProcessor] = useState(false);
-
-  // ✅ Multiple V1 files (library), and each return file chooses one (or none)
-  const [v1Bundles, setV1Bundles] = useState<V1FileBundle[]>([]);
-  const [v1LibraryError, setV1LibraryError] = useState<string | null>(null);
 
   function updateFileConfig(id: string, updater: (old: ReturnFileConfig) => ReturnFileConfig) {
     setFileConfigs((prev) => prev.map((c) => (c.id === id ? updater(c) : c)));
@@ -300,8 +189,9 @@ const list = await listReturnUploadedFilesByDate(dateKey);
     );
   }
 
-  function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
+  async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const inputEl = e.target;
+    const files = inputEl.files;
 
     if (!files || files.length === 0) {
       setFileConfigs([]);
@@ -311,6 +201,22 @@ const list = await listReturnUploadedFilesByDate(dateKey);
       setDownloadBlob(null);
       setError(null);
       return;
+    }
+
+    // Inspect the Summary sheet before importing records into configuration
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const validation = await validateFileData(f, "return");
+      if (!validation.isValid) {
+        setError(validation.error);
+        inputEl.value = "";
+        setFileConfigs([]);
+        setPreviewTable([]);
+        setPreviewLabel("");
+        setStructuredReturns([]);
+        setDownloadBlob(null);
+        return;
+      }
     }
 
     const list: ReturnFileConfig[] = [];
@@ -335,10 +241,6 @@ const list = await listReturnUploadedFilesByDate(dateKey);
         autoDetectedGameId: null,
         autoDetectNote: null,
         autoDetectStatus: "not_found",
-
-        // ✅ per-file V1 selection defaults to NONE
-        v1Id: null,
-        strictMatchGameDraw: false,
       });
     }
 
@@ -388,8 +290,15 @@ const list = await listReturnUploadedFilesByDate(dateKey);
       setError(null);
       setSavingFileId(cfg.id);
 
+      // Validate Summary sheet before database writes
+      const validation = await validateFileData(cfg.file, "return");
+      if (!validation.isValid) {
+        setError(validation.error);
+        return;
+      }
+
       // Save under gameId as both id and name (same pattern you used in Sales page)
-await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
+      await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
 
       await loadUploads(businessDate);
     } catch (err: unknown) {
@@ -397,6 +306,67 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
       setError(msg);
     } finally {
       setSavingFileId(null);
+    }
+  }
+
+  // ------------- Save All Files to Firebase -------------
+  async function handleSaveAll(shouldDeleteOld: boolean = false) {
+    if (!businessDate) {
+      setError("Please pick a business date at the top before saving files.");
+      return;
+    }
+
+    const validConfigs = fileConfigs.filter(
+      (cfg) => cfg.autoDetectStatus === "ok" && !!cfg.gameId
+    );
+
+    if (validConfigs.length === 0) {
+      setError("No valid return files to save (check auto-detect status and game ID).");
+      return;
+    }
+
+    // Strict pre-validation of all files before ANY database/storage writes
+    for (const cfg of validConfigs) {
+      const validation = await validateFileData(cfg.file, "return");
+      if (!validation.isValid) {
+        setError(validation.error);
+        return;
+      }
+    }
+
+    setIsSavingAll(true);
+    setError(null);
+    setSaveSuccessMessage(null);
+
+    try {
+      if (shouldDeleteOld) {
+        for (const u of uploads) {
+          try {
+            await deleteReturnUploadedFile(u);
+          } catch (e) {
+            console.error("Failed to delete old return file:", e);
+          }
+        }
+      }
+
+      // Atomic batch save with automatic rollback on partial failure
+      await saveReturnUploadedFilesAtomic(
+        validConfigs.map((cfg) => ({
+          file: cfg.file,
+          gameId: cfg.gameId,
+          gameName: cfg.gameId,
+        })),
+        businessDate
+      );
+
+      await loadUploads(businessDate);
+      setSaveSuccessMessage(`Successfully saved ${validConfigs.length} return file(s) to Firebase!`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error saving return files to Firebase.";
+      setError(`Error during Save All: ${msg}`);
+    } finally {
+      setSavingFileId(null);
+      setIsSavingAll(false);
     }
   }
 
@@ -442,8 +412,6 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
             autoDetectedGameId: null,
             autoDetectNote: null,
             autoDetectStatus: "not_found",
-            v1Id: null,
-            strictMatchGameDraw: false,
           });
           index++;
         } catch (err) {
@@ -488,8 +456,6 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
         autoDetectedGameId: null,
         autoDetectNote: null,
         autoDetectStatus: "not_found",
-        v1Id: null,
-        strictMatchGameDraw: false,
       };
 
       const newList = [...fileConfigs, newConfig];
@@ -503,61 +469,7 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
     }
   }
 
-  // ✅ Upload multiple V1 files into a library
-  async function handleV1LibraryChange(e: ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
-    setV1LibraryError(null);
 
-    if (!files || files.length === 0) {
-      setV1Bundles([]);
-      // also clear per-file selection
-      setFileConfigs((prev) => prev.map((c) => ({ ...c, v1Id: null })));
-      return;
-    }
-
-    const bundles: V1FileBundle[] = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      const id = `${f.name}-${i}-${Date.now()}`;
-
-      try {
-        const sheet = await readFirstSheet(f);
-        const rows = parseV1FromSheet(sheet);
-
-        bundles.push({
-          id,
-          fileName: f.name,
-          rows,
-          error: rows.length === 0
-            ? "No valid V1 rows detected (need DealerCode + From + To/Qty)."
-            : null,
-        });
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Failed to read V1 file.";
-        bundles.push({
-          id,
-          fileName: f.name,
-          rows: [],
-          error: msg,
-        });
-      }
-    }
-
-    setV1Bundles(bundles);
-
-    // If old v1Id selections are now invalid, reset them
-    const validIds = new Set(bundles.map((b) => b.id));
-    setFileConfigs((prev) =>
-      prev.map((c) => (c.v1Id && !validIds.has(c.v1Id) ? { ...c, v1Id: null } : c))
-    );
-
-    // Surface a summary error if all failed
-    const hasAnyGood = bundles.some((b) => b.rows.length > 0 && !b.error);
-    if (!hasAnyGood) {
-      setV1LibraryError("V1 files loaded, but none produced valid rows. Check V1 format.");
-    }
-  }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -571,6 +483,11 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
     }
 
     for (const cfg of fileConfigs) {
+      const validation = await validateFileData(cfg.file, "return");
+      if (!validation.isValid) {
+        setError(validation.error);
+        return;
+      }
       if (cfg.autoDetectStatus !== "ok") {
         setError(`Fix file "${cfg.file.name}": ${cfg.autoDetectNote || "Auto-detection failed."}`);
         return;
@@ -593,17 +510,11 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
       for (const cfg of fileConfigs) {
         const normalized = await readFirstSheet(cfg.file);
 
-        // ✅ pick V1 rows per file (or none)
-        const v1ForThisFile =
-          cfg.v1Id ? (v1Bundles.find((b) => b.id === cfg.v1Id)?.rows ?? []) : [];
-
         const rows = await buildReturnRows(
           normalized,
           cfg.gameId,                       // official code
           formatDateToDDMMYYYY(businessDate),
-          cfg.trimDigits,
-          v1ForThisFile,
-          { strictMatchGameDraw: cfg.strictMatchGameDraw }
+          cfg.trimDigits
         );
 
         allRows.push(...rows);
@@ -612,7 +523,7 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
       setStructuredReturns(allRows);
 
       if (allRows.length === 0) {
-        setError("No valid return rows detected (or everything was excluded by selected V1).");
+        setError("No valid return rows detected.");
       } else {
         const ws = XLSX.utils.json_to_sheet(allRows);
         const wb = XLSX.utils.book_new();
@@ -679,12 +590,7 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
 
   const totalQty = structuredReturns.reduce((sum, r) => sum + (r.Qty || 0), 0);
 
-  const v1LibraryStatus = useMemo(() => {
-    if (v1Bundles.length === 0) return "No V1 files loaded (per-file exclusion disabled).";
-    const ok = v1Bundles.filter((b) => b.rows.length > 0 && !b.error).length;
-    const bad = v1Bundles.length - ok;
-    return `V1 library loaded: ${v1Bundles.length} files (${ok} OK, ${bad} with issues).`;
-  }, [v1Bundles]);
+
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-900">
@@ -809,55 +715,7 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
           <DealerAliasEditor />
         </section>
 
-        {/* ✅ V1 library (multiple files) */}
-        <section className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-3">
-          <div>
-            <h2 className="text-sm font-medium text-gray-800">V1 Exclusion Library (optional)</h2>
-            <p className="text-[11px] text-gray-600">
-              Upload one or more V1 tables. Then, for each return file you can choose: <b>None</b> or select which V1
-              file to exclude against.
-            </p>
-          </div>
 
-          <div className="bg-white border border-gray-300 rounded-lg p-3 space-y-2">
-            <input
-              type="file"
-              accept=".xls,.xlsx"
-              multiple
-              onChange={handleV1LibraryChange}
-              className="w-full text-sm"
-            />
-            <p className="text-[11px] text-gray-700">
-              Status: <b>{v1LibraryStatus}</b>
-            </p>
-            {v1LibraryError && <p className="text-[11px] text-red-600">{v1LibraryError}</p>}
-
-            {v1Bundles.length > 0 && (
-              <div className="max-h-40 overflow-auto border border-gray-200 rounded p-2">
-                <table className="min-w-full text-[11px]">
-                  <thead className="bg-gray-100">
-                    <tr>
-                      <th className="px-2 py-1 text-left font-medium">V1 File</th>
-                      <th className="px-2 py-1 text-right font-medium">Rows</th>
-                      <th className="px-2 py-1 text-left font-medium">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {v1Bundles.map((b) => (
-                      <tr key={b.id} className="border-t border-gray-200">
-                        <td className="px-2 py-1 whitespace-nowrap">{b.fileName}</td>
-                        <td className="px-2 py-1 text-right">{b.rows.length}</td>
-                        <td className="px-2 py-1">
-                          {b.error ? <span className="text-red-600">{b.error}</span> : "OK"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </section>
 
         {/* Main form */}
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -883,6 +741,61 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
             {/* Per-file config cards */}
             {fileConfigs.length > 0 && (
               <div className="space-y-3">
+                {/* Save All Control Bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg shadow-sm">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold text-blue-800 bg-blue-100 rounded-full">
+                        {fileConfigs.length} File{fileConfigs.length > 1 ? "s" : ""}
+                      </span>
+                      <h3 className="text-sm font-semibold text-gray-800">
+                        Batch Return Uploads
+                      </h3>
+                    </div>
+                    <p className="text-[11px] text-gray-600 mt-0.5">
+                      Save all valid return files to Firebase Storage & Firestore at once instead of clicking each.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (uploads.length > 0) {
+                        setShowDeleteOldFilesModal(true);
+                      } else {
+                        void handleSaveAll(false);
+                      }
+                    }}
+                    disabled={isSavingAll || !businessDate}
+                    className="px-4 py-2 bg-green-700 hover:bg-green-600 active:bg-green-800 disabled:opacity-50 text-white rounded-lg font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {isSavingAll ? (
+                      <>
+                        <span className="inline-block animate-spin mr-1">⏳</span>
+                        <span>Saving All Files…</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>💾</span>
+                        <span>Save All to Firebase</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {saveSuccessMessage && (
+                  <div className="p-3 bg-green-50 border border-green-300 text-green-800 text-xs rounded-lg flex items-center justify-between shadow-sm">
+                    <span className="font-medium">✓ {saveSuccessMessage}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSaveSuccessMessage(null)}
+                      className="text-green-700 hover:text-green-900 font-bold ml-2 text-sm"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
                 {fileConfigs.map((cfg, idx) => {
                   const canSave =
                     !!businessDate &&
@@ -973,50 +886,7 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
                         )}
                       </div>
 
-                      {/* ✅ Per-file V1 selection */}
-                      <div className="border border-gray-200 rounded p-3 bg-gray-50 space-y-2">
-                        <div className="text-xs font-medium text-gray-800">V1 Exclusion (optional, per file)</div>
 
-                        <div>
-                          <label className="block text-[11px] mb-1 text-gray-700">
-                            Select V1 file to exclude against
-                          </label>
-                          <select
-                            value={cfg.v1Id ?? ""}
-                            onChange={(e) =>
-                              updateFileConfig(cfg.id, (old) => ({
-                                ...old,
-                                v1Id: e.target.value ? e.target.value : null,
-                              }))
-                            }
-                            className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-white"
-                          >
-                            <option value="">None (no exclusion)</option>
-                            {v1Bundles.map((b) => (
-                              <option key={b.id} value={b.id}>
-                                {b.fileName} ({b.rows.length} rows){b.error ? " - ERROR" : ""}
-                              </option>
-                            ))}
-                          </select>
-                          <p className="text-[11px] text-gray-600 mt-1">
-                            You can keep it <b>None</b> for some files and select a V1 for others.
-                          </p>
-                        </div>
-
-                        <label className="text-[11px] text-gray-700 flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={cfg.strictMatchGameDraw}
-                            onChange={(e) =>
-                              updateFileConfig(cfg.id, (old) => ({
-                                ...old,
-                                strictMatchGameDraw: e.target.checked,
-                              }))
-                            }
-                          />
-                          Strict match Dealer + Game + Draw (only if your V1 includes Game/Draw)
-                        </label>
-                      </div>
                     </div>
                   );
                 })}
@@ -1026,13 +896,32 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
 
           {error && <p className="text-sm text-red-600">{error}</p>}
 
-          <button
-            type="submit"
-            disabled={isLoading || fileConfigs.length === 0}
-            className="px-4 py-2 rounded bg-green-600 hover:bg-green-700 text-white text-sm font-medium disabled:opacity-60"
-          >
-            {isLoading ? "Processing returns..." : "Build structured return table"}
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="submit"
+              disabled={isLoading || fileConfigs.length === 0}
+              className="px-4 py-2 rounded bg-green-600 hover:bg-green-700 text-white text-sm font-medium disabled:opacity-60 cursor-pointer"
+            >
+              {isLoading ? "Processing returns..." : "Build structured return table"}
+            </button>
+
+            {fileConfigs.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (uploads.length > 0) {
+                    setShowDeleteOldFilesModal(true);
+                  } else {
+                    void handleSaveAll(false);
+                  }
+                }}
+                disabled={isSavingAll || !businessDate}
+                className="px-4 py-2 rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-medium shadow flex items-center gap-2 cursor-pointer transition-colors"
+              >
+                {isSavingAll ? "Saving All Files…" : "💾 Save All to Firebase"}
+              </button>
+            )}
+          </div>
         </form>
 
         {/* Preview */}
@@ -1118,8 +1007,55 @@ await saveReturnUploadedFile(cfg.file, cfg.gameId, cfg.gameId, businessDate);
 
         {previewTable.length === 0 && structuredReturns.length === 0 && !isLoading && !error && (
           <p className="text-xs text-gray-600">
-            Upload return files, confirm auto-detected game, optionally select a V1 exclusion per file, then build the structured Excel.
+            Upload return files, confirm auto-detected game, then build the structured Excel.
           </p>
+        )}
+
+        {/* Modal for Deleting Old Files */}
+        {showDeleteOldFilesModal && (
+          <div className="fixed inset-0 bg-slate-900/80 flex flex-col items-center justify-center z-[70] p-6 backdrop-blur-sm">
+            <div className="bg-white text-slate-800 p-8 rounded-3xl border border-gray-300 max-w-xl text-center shadow-2xl">
+              <h2 className="text-2xl font-bold mb-3 text-gray-900">
+                Existing return files found for this date
+              </h2>
+              <p className="text-sm text-gray-600 mb-6">
+                There are already <b>{uploads.length}</b> return file(s) saved for <b>{businessDate}</b>.<br />
+                Do you want to remove old files before saving the new ones, or keep both?
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setShowDeleteOldFilesModal(false);
+                    void handleSaveAll(true);
+                  }}
+                  className="px-5 py-3 bg-red-700 text-white text-sm font-bold rounded-xl hover:bg-red-600 transition-colors shadow cursor-pointer"
+                >
+                  Remove Old & Save All
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setShowDeleteOldFilesModal(false);
+                    void handleSaveAll(false);
+                  }}
+                  className="px-5 py-3 bg-blue-700 text-white text-sm font-bold rounded-xl hover:bg-blue-600 transition-colors shadow cursor-pointer"
+                >
+                  Keep Old & Save All
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={() => setShowDeleteOldFilesModal(false)}
+                  className="px-5 py-3 bg-gray-200 text-gray-700 text-sm font-bold rounded-xl hover:bg-gray-300 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </main>

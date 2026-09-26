@@ -13,6 +13,11 @@ import {
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 
+import {
+  validateFileData,
+  UNRECOGNIZED_FILE_ERROR,
+} from "./fileValidation";
+
 export type ReturnUploadedFileRecord = {
   id: string;
   fileName: string;
@@ -33,8 +38,10 @@ const STORAGE_ROOT = "return-uploads";
 
 /**
  * Save an uploaded Return Excel file to Firebase:
+ * - validates file type is Return before any database or storage writes
  * - content to Storage
  * - metadata to Firestore
+ * - atomic: cleans up Storage if Firestore metadata creation fails
  */
 export async function saveReturnUploadedFile(
   file: File,
@@ -42,14 +49,25 @@ export async function saveReturnUploadedFile(
   gameName: string,
   uploadDate: string
 ): Promise<ReturnUploadedFileRecord> {
-  const safeDate = uploadDate || new Date().toISOString().slice(0, 10);
+  // 1. Strict validation before ANY database/storage writes
+  const validation = await validateFileData(file, "return");
+  if (!validation.isValid) {
+    throw new Error(validation.error || UNRECOGNIZED_FILE_ERROR);
+  }
 
+  const safeDate = uploadDate || new Date().toISOString().slice(0, 10);
   const storagePath = `${STORAGE_ROOT}/${safeDate}/${Date.now()}_${file.name}`;
   const storageRef = ref(storage, storagePath);
 
   await uploadBytes(storageRef, file);
 
-  const downloadUrl = await getDownloadURL(storageRef);
+  let downloadUrl = "";
+  try {
+    downloadUrl = await getDownloadURL(storageRef);
+  } catch (err) {
+    await deleteObject(storageRef).catch(() => {});
+    throw err;
+  }
 
   const meta = {
     fileName: file.name,
@@ -62,12 +80,59 @@ export async function saveReturnUploadedFile(
     createdAt: Timestamp.now(),
   };
 
-  const docRef = await addDoc(collection(db, COLLECTION), meta);
+  try {
+    const docRef = await addDoc(collection(db, COLLECTION), meta);
+    return {
+      id: docRef.id,
+      ...meta,
+    };
+  } catch (err) {
+    // Atomic rollback: remove uploaded binary if document write fails
+    await deleteObject(storageRef).catch(() => {});
+    throw err;
+  }
+}
 
-  return {
-    id: docRef.id,
-    ...meta,
-  };
+/**
+ * Atomically save multiple Return files to Firebase.
+ * Pre-validates ALL files before performing any writes.
+ * If any write fails, all previously uploaded files in this batch are rolled back.
+ */
+export async function saveReturnUploadedFilesAtomic(
+  items: Array<{ file: File; gameId: string; gameName: string }>,
+  uploadDate: string
+): Promise<ReturnUploadedFileRecord[]> {
+  // Pre-validate all files before ANY database/storage writes
+  for (const item of items) {
+    const validation = await validateFileData(item.file, "return");
+    if (!validation.isValid) {
+      throw new Error(`File "${item.file.name}" rejected: ${validation.error}`);
+    }
+  }
+
+  const savedRecords: ReturnUploadedFileRecord[] = [];
+  try {
+    for (const item of items) {
+      const rec = await saveReturnUploadedFile(
+        item.file,
+        item.gameId,
+        item.gameName,
+        uploadDate
+      );
+      savedRecords.push(rec);
+    }
+    return savedRecords;
+  } catch (err) {
+    // Rollback all saved records from this batch
+    for (const rec of savedRecords) {
+      try {
+        await deleteReturnUploadedFile(rec);
+      } catch (rollbackErr) {
+        console.error("Rollback failed for", rec.fileName, rollbackErr);
+      }
+    }
+    throw err;
+  }
 }
 
 /**
