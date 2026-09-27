@@ -909,39 +909,61 @@ export default function HomePage() {
             ERP Summary → Structured Dealer Table (multi-game, per-file ranges)
           </h1>
 
-          <div className="flex items-center gap-2">
-            {/* Existing Returns Page */}
-            <Link
-              href="/returns"
-              className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow"
-            >
-              Go to Returns Page
-            </Link>
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            {/* Primary Navigation Row */}
+            <div className="flex items-center gap-2">
+              {/* Existing Returns Page */}
+              <Link
+                href="/returns"
+                className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow"
+              >
+                Go to Returns Page
+              </Link>
 
-            {/* New Returns Analyzer */}
-            <Link
-              href="/return-analysis"
-              className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium shadow"
-            >
-              Returns Analyzer
-            </Link>
+              {/* New Returns Analyzer */}
+              <Link
+                href="/return-analysis"
+                className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium shadow"
+              >
+                Returns Analyzer
+              </Link>
 
-            {/* NLB Sales Upload */}
-            <Link
-              href="/nlb"
-              className="px-3 py-1.5 rounded bg-teal-600 hover:bg-teal-700 text-white text-xs font-medium shadow"
-            >
-              NLB Sales Upload
-            </Link>
+              {/* NLB Sales Upload */}
+              <Link
+                href="/nlb"
+                className="px-3 py-1.5 rounded bg-teal-600 hover:bg-teal-700 text-white text-xs font-medium shadow"
+              >
+                NLB Sales Upload
+              </Link>
 
-            {/* Logout */}
-            <button
-              type="button"
-              onClick={() => signOut(auth)}
-              className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium shadow"
-            >
-              Logout
-            </button>
+              {/* Logout */}
+              <button
+                type="button"
+                onClick={() => signOut(auth)}
+                className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium shadow"
+              >
+                Logout
+              </button>
+            </div>
+
+            {/* Financial Balancing Row */}
+            <div className="flex items-center gap-2">
+              {/* Daily Balance Organizer */}
+              <Link
+                href="/daily-balance"
+                className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow flex items-center gap-1"
+              >
+                <span>Balance Organizer</span>
+              </Link>
+
+              {/* Win Scan Balancing */}
+              <Link
+                href="/scan-balancing"
+                className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow flex items-center gap-1"
+              >
+                <span>Scan Balancing</span>
+              </Link>
+            </div>
           </div>
         </div>
 

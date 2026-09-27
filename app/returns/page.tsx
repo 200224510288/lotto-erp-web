@@ -600,13 +600,32 @@ const list = await listReturnUploadedFilesByDate(dateKey);
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-semibold">Agent Return Report → Structured Return Table</h1>
 
-          <div className="flex items-center gap-3">
-            <Link
-              href="/"
-              className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium shadow"
-            >
-              Go to Sales Page
-            </Link>
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            {/* Primary Navigation Row */}
+            <div className="flex items-center gap-2">
+              <Link
+                href="/"
+                className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium shadow"
+              >
+                Go to Sales Page
+              </Link>
+            </div>
+
+            {/* Financial Balancing Row */}
+            <div className="flex items-center gap-2">
+              <Link
+                href="/daily-balance"
+                className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow"
+              >
+                Balance Organizer
+              </Link>
+              <Link
+                href="/scan-balancing"
+                className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow"
+              >
+                Scan Balancing
+              </Link>
+            </div>
           </div>
         </div>
 

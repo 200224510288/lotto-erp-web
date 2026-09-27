@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
+import Link from "next/link";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -675,6 +676,40 @@ export default function ReturnAnalysisPage() {
             <p className="mt-2 text-sm text-slate-600">
               Consolidated Agent Total Sales & Returns. View Daily, Weekly, or Monthly metrics, set return thresholds, and clean agent lists before exporting.
             </p>
+          </div>
+
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            {/* Primary Navigation Row */}
+            <div className="flex items-center gap-2">
+              <Link
+                href="/"
+                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-800 text-white text-xs font-medium shadow-xs transition"
+              >
+                Sales Page
+              </Link>
+              <Link
+                href="/returns"
+                className="px-3 py-1.5 rounded-lg bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow-xs transition"
+              >
+                Returns Page
+              </Link>
+            </div>
+
+            {/* Financial Balancing Row */}
+            <div className="flex items-center gap-2">
+              <Link
+                href="/daily-balance"
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition"
+              >
+                Balance Organizer
+              </Link>
+              <Link
+                href="/scan-balancing"
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs transition"
+              >
+                Scan Balancing
+              </Link>
+            </div>
           </div>
         </div>
 

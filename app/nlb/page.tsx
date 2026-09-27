@@ -1198,13 +1198,32 @@ export default function NlbPreprocessPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Link
-              href="/nlb-returns"
-              className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
-            >
-              NLB Returns →
-            </Link>
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            {/* Primary Navigation Row */}
+            <div className="flex items-center gap-2">
+              <Link
+                href="/nlb-returns"
+                className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
+              >
+                NLB Returns →
+              </Link>
+            </div>
+
+            {/* Financial Balancing Row */}
+            <div className="flex items-center gap-2">
+              <Link
+                href="/daily-balance"
+                className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
+              >
+                Balance Organizer
+              </Link>
+              <Link
+                href="/scan-balancing"
+                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
+              >
+                Scan Balancing
+              </Link>
+            </div>
           </div>
         </div>
 
