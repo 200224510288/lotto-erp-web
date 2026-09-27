@@ -96,7 +96,7 @@ export default function ReturnsPage() {
 
   const [structuredReturns, setStructuredReturns] = useState<ReturnRow[]>([]);
   const [downloadBlob, setDownloadBlob] = useState<Blob | null>(null);
-  const [fileName, setFileName] = useState<string>("Agent_Returns_structured.xlsx");
+  const [fileName, setFileName] = useState<string>("RT.xlsx");
 
   // Return files
   const [fileConfigs, setFileConfigs] = useState<ReturnFileConfig[]>([]);
@@ -537,7 +537,7 @@ const list = await listReturnUploadedFilesByDate(dateKey);
         );
       }
 
-      setFileName("Agent_Returns_structured.xlsx");
+      setFileName("RT.xlsx");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error while processing the return files.";
       setError(msg);
@@ -550,20 +550,22 @@ const list = await listReturnUploadedFilesByDate(dateKey);
     if (!downloadBlob) return;
     
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const targetDownloadName = fileName || "RT.xlsx";
 
     if (isLocal) {
       try {
-        const res = await fetch('/api/save-local', {
+        const res = await fetch(`/api/save-local?filename=${encodeURIComponent(targetDownloadName)}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/octet-stream',
+            'x-filename': targetDownloadName,
           },
           body: downloadBlob,
         });
         
         const result = await res.json();
         if (res.ok && result.success) {
-          alert(result.message || 'File saved successfully to C:\\DLB\\1.xlsx');
+          alert(result.message || `File saved successfully to C:\\DLB\\${targetDownloadName}`);
           return;
         } else {
           console.warn(`Local save failed: ${result.error}. Falling back to browser download.`);
@@ -578,7 +580,7 @@ const list = await listReturnUploadedFilesByDate(dateKey);
       const url = window.URL.createObjectURL(downloadBlob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "1.xlsx";
+      a.download = targetDownloadName;
       document.body.appendChild(a);
       a.click();
       a.remove();
