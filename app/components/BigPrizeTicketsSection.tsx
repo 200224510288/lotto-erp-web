@@ -253,6 +253,7 @@ export default function BigPrizeTicketsSection({
       setSuccessMessage(`Added Rs. ${cleanAmtNum.toLocaleString()} for ${cleanLottery}.`);
 
       // Reset fields
+      setLotteryName("");
       setClaimAmount("");
       setAgentOrCustomer("");
       setIsScannedInput(false);
