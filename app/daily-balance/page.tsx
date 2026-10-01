@@ -33,6 +33,8 @@ import { useAuth } from "../lib/AuthProvider";
 import BalanceSecurityGate from "../components/BalanceSecurityGate";
 import DailyBalanceSummaryCards from "../components/DailyBalanceSummaryCards";
 import SequentialBalanceChecker from "../components/SequentialBalanceChecker";
+import BigPrizeTicketsSection from "../components/BigPrizeTicketsSection";
+import { BigPrizeSummary } from "../lib/bigPrizeTicketsService";
 import {
   DailyBalanceReport,
   BalanceRecordRow,
@@ -85,6 +87,9 @@ export default function DailyBalancePage() {
   const [rows, setRows] = useState<BalanceRecordRow[]>([]);
   const [isLoadingReport, setIsLoadingReport] = useState<boolean>(true);
   const [reportError, setReportError] = useState<string | null>(null);
+
+  // Big Prize Winning Tickets Summary State
+  const [bigPrizeSummary, setBigPrizeSummary] = useState<BigPrizeSummary | null>(null);
 
   // File Upload & Staging
   const [dragActive, setDragActive] = useState<boolean>(false);
@@ -747,12 +752,20 @@ export default function DailyBalancePage() {
             </div>
           )}
 
+          {/* ===== BIG PRIZE WINNING TICKETS RECEIVED SECTION ===== */}
+          <BigPrizeTicketsSection
+            selectedDate={selectedDate}
+            userEmail={user.email || "Authorized Officer"}
+            onSummaryChange={setBigPrizeSummary}
+          />
+
           {/* ===== SUMMARY CARDS COMPONENT ===== */}
           {report && (
             <DailyBalanceSummaryCards
               report={report}
               progress={progressSummary}
               selectedDate={selectedDate}
+              bigPrizeSummary={bigPrizeSummary}
             />
           )}
 

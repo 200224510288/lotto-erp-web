@@ -19,17 +19,20 @@ import {
   DailyBalanceReport,
   BalancingProgressSummary,
 } from "../lib/balanceOrganizerService";
+import { BigPrizeSummary } from "../lib/bigPrizeTicketsService";
 
 interface DailyBalanceSummaryCardsProps {
   report: DailyBalanceReport | null;
   progress: BalancingProgressSummary;
   selectedDate: string;
+  bigPrizeSummary?: BigPrizeSummary | null;
 }
 
 export default function DailyBalanceSummaryCards({
   report,
   progress,
   selectedDate,
+  bigPrizeSummary,
 }: DailyBalanceSummaryCardsProps) {
   if (!report) {
     return null;
@@ -67,27 +70,48 @@ export default function DailyBalanceSummaryCards({
           </div>
         </div>
 
-        {/* Checked status badge */}
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-slate-600">Checking Status:</span>
-          <span
-            className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 border shadow-xs ${
-              progress.pendingRecords === 0
-                ? "bg-emerald-100 text-emerald-800 border-emerald-300"
-                : progress.checkedRecords > 0
-                ? "bg-amber-100 text-amber-900 border-amber-300"
-                : "bg-slate-200 text-slate-800 border-slate-300"
-            }`}
-          >
-            {progress.pendingRecords === 0 ? (
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-            ) : (
-              <Clock className="w-3.5 h-3.5 text-amber-600" />
-            )}
-            <span>
-              {progress.checkedRecords} / {progress.totalRecords} Checked
+        {/* Checked status badge & Big Prize Badge */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {bigPrizeSummary && bigPrizeSummary.totalCount > 0 && (
+            <div className="flex items-center gap-2 text-xs sm:text-sm text-amber-900 bg-amber-50 px-3 py-1.5 rounded-full border border-amber-300 shadow-2xs font-medium">
+              <Trophy className="w-4 h-4 text-amber-600" />
+              <span>Big Prize:</span>
+              <span className="font-mono font-bold text-amber-950 text-sm sm:text-base">
+                {formatCurrency(bigPrizeSummary.totalClaimAmount)}
+              </span>
+              <span
+                className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                  bigPrizeSummary.pendingCount === 0
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-amber-200/80 text-amber-900"
+                }`}
+              >
+                {bigPrizeSummary.scannedCount}/{bigPrizeSummary.totalCount} Scanned
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs sm:text-sm text-slate-600 font-medium">Checking Status:</span>
+            <span
+              className={`px-3 py-1.5 rounded-full text-xs sm:text-sm font-semibold flex items-center gap-1.5 border shadow-xs ${
+                progress.pendingRecords === 0
+                  ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                  : progress.checkedRecords > 0
+                  ? "bg-amber-100 text-amber-900 border-amber-300"
+                  : "bg-slate-200 text-slate-800 border-slate-300"
+              }`}
+            >
+              {progress.pendingRecords === 0 ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              ) : (
+                <Clock className="w-4 h-4 text-amber-600" />
+              )}
+              <span>
+                {progress.checkedRecords} / {progress.totalRecords} Checked
+              </span>
             </span>
-          </span>
+          </div>
         </div>
       </div>
 
