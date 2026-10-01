@@ -753,17 +753,22 @@ export async function saveDailyBalanceReport(
       for (let i = 0; i < chunk.length; i++) {
         const row = chunk[i];
         const rowId = `row_${row.rowIndex}`;
-        const rowDocRef = doc(db, REPORTS_COLLECTION, balanceDate, "rows", rowId);
-
         const rowPayload: BalanceRecordRow = {
-          ...row,
           id: rowId,
           reportId: balanceDate,
+          balanceDate: row.balanceDate || balanceDate,
+          rowIndex: row.rowIndex,
+          serialNo: row.serialNo || "",
+          agentName: row.agentName || "Unknown Agent",
+          win: Number(row.win) || 0,
+          cashAndCheque: Number(row.cashAndCheque) || 0,
+          balance: Number(row.balance) || 0,
           isChecked: false,
           checkedBy: null,
           checkedAt: null,
         };
 
+        const rowDocRef = doc(db, REPORTS_COLLECTION, balanceDate, "rows", rowId);
         batch.set(rowDocRef, rowPayload);
       }
 

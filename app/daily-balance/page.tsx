@@ -25,6 +25,10 @@ import {
   Trash2,
   ExternalLink,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Layers,
 } from "lucide-react";
 
@@ -115,6 +119,15 @@ export default function DailyBalancePage() {
   const [sortField, setSortField] = useState<SortField>("original");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
+  // Pagination State
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // Reset to first page when search, filter, or sorting changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchAgent, searchSerial, statusFilter, sortField, sortDirection, pageSize]);
+
   // File input ref
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -162,7 +175,6 @@ export default function DailyBalancePage() {
   // Handle file selection and parsing
   async function handleFileSelected(file: File) {
     setReportError(null);
-    setStagedFile(file);
     setIsParsing(true);
 
     try {
@@ -170,23 +182,53 @@ export default function DailyBalancePage() {
       if (!parsed.isValid) {
         setReportError(parsed.error || "Failed to parse Excel file.");
         setParseResult(null);
-      } else {
-        setParseResult(parsed);
-        // If no report currently exists, we can save immediately or let user confirm
-        if (report) {
-          setShowReplaceModal(true);
-        }
+        setStagedFile(null);
+        setIsParsing(false);
+        return;
       }
-    } catch (err) {
-      console.error("Error parsing file:", err);
-      setReportError(err instanceof Error ? err.message : "Error reading Excel file.");
+
+      setStagedFile(file);
+      setParseResult(parsed);
+
+      // If report already exists for this date, prompt to overwrite
+      if (report) {
+        setShowReplaceModal(true);
+        setIsParsing(false);
+        return;
+      }
+
+      // No existing report -> save to database immediately and load!
+      setIsSavingReport(true);
+      const reportPayload = {
+        balanceDate: selectedDate,
+        originalFileName: file.name,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: user?.email || "Authorized Officer",
+        totalRows: parsed.totalRows,
+        totalWin: parsed.totalWin,
+        totalCashAndCheque: parsed.totalCashAndCheque,
+        totalCalculatedBalance: parsed.totalCalculatedBalance,
+        checkedCount: 0,
+        pendingCount: parsed.totalRows,
+        status: "pending" as const,
+      };
+
+      await saveDailyBalanceReport(reportPayload, parsed.rows);
+      setStagedFile(null);
       setParseResult(null);
+      await loadReportForDate(selectedDate);
+    } catch (err) {
+      console.error("Error parsing or saving file:", err);
+      setReportError(err instanceof Error ? err.message : "Error reading or saving Excel file.");
+      setParseResult(null);
+      setStagedFile(null);
     } finally {
       setIsParsing(false);
+      setIsSavingReport(false);
     }
   }
 
-  // Save staged report to database
+  // Save staged report to database (used by Overwrite Confirmation Modal)
   async function handleSaveReportToDb() {
     if (!parseResult || !parseResult.isValid || !stagedFile) return;
 
@@ -442,6 +484,17 @@ export default function DailyBalancePage() {
     return result;
   }, [rows, statusFilter, searchAgent, searchSerial, sortField, sortDirection]);
 
+  // Pagination calculations
+  const totalItems = filteredAndSortedRows.length;
+  const effectivePageSize = pageSize === -1 ? (totalItems || 1) : pageSize;
+  const totalPages = Math.max(1, Math.ceil(totalItems / effectivePageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = (safeCurrentPage - 1) * effectivePageSize;
+  const endIndex = Math.min(startIndex + effectivePageSize, totalItems);
+  const paginatedRows = useMemo(() => {
+    return filteredAndSortedRows.slice(startIndex, endIndex);
+  }, [filteredAndSortedRows, startIndex, endIndex]);
+
   // Handle Sort column click
   function handleColumnSort(field: SortField) {
     if (sortField === field) {
@@ -674,115 +727,9 @@ export default function DailyBalancePage() {
             </div>
           )}
 
-          {/* ===== STAGED FILE PREVIEW (IF FILE SELECTED FOR UPLOAD) ===== */}
-          {parseResult && parseResult.isValid && stagedFile && (
-            <div className="rounded-xl border-2 border-emerald-400 bg-emerald-50/40 p-5 shadow-sm space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-200 pb-3">
-                <div className="flex items-center gap-2">
-                  <FileSpreadsheet className="w-5 h-5 text-emerald-700" />
-                  <div>
-                    <h3 className="text-sm font-bold text-emerald-950">
-                      Excel File Ready to Save: {stagedFile.name}
-                    </h3>
-                    <p className="text-[11px] text-emerald-700">
-                      Sheet: <b>{parseResult.sheetName}</b> | Header detected on row {parseResult.headerRowIndex + 1}
-                    </p>
-                  </div>
-                </div>
+          {/* ===== 1. DAILY BALANCE REPORT (CORE SECTION) ===== */}
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStagedFile(null);
-                      setParseResult(null);
-                    }}
-                    className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-slate-700 hover:bg-slate-100"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isSavingReport}
-                    onClick={handleSaveReportToDb}
-                    className="px-5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow transition flex items-center gap-1.5 disabled:opacity-50"
-                  >
-                    {isSavingReport ? (
-                      <>
-                        <span className="inline-block animate-spin">⏳</span>
-                        <span>Saving to Database…</span>
-                      </>
-                    ) : (
-                      <>
-                        <Check className="w-4 h-4 stroke-[2.5]" />
-                        <span>Save Report to Database</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Quick totals preview */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                <div className="rounded-lg bg-white p-3 border border-emerald-200">
-                  <span className="text-slate-500 font-medium">Total Rows:</span>
-                  <div className="text-base font-bold text-slate-900 font-mono mt-0.5">
-                    {parseResult.totalRows}
-                  </div>
-                </div>
-                <div className="rounded-lg bg-white p-3 border border-emerald-200">
-                  <span className="text-slate-500 font-medium">Total CASH &amp; CHE.:</span>
-                  <div className="text-base font-bold text-teal-800 font-mono mt-0.5">
-                    {formatCurrency(parseResult.totalCashAndCheque)}
-                  </div>
-                </div>
-                <div className="rounded-lg bg-white p-3 border border-emerald-200">
-                  <span className="text-slate-500 font-medium">Total WIN:</span>
-                  <div className="text-base font-bold text-purple-800 font-mono mt-0.5">
-                    {formatCurrency(parseResult.totalWin)}
-                  </div>
-                </div>
-                <div className="rounded-lg bg-white p-3 border border-emerald-200">
-                  <span className="text-slate-500 font-medium">Total Balance:</span>
-                  <div className="text-base font-bold text-emerald-800 font-mono mt-0.5">
-                    {formatCurrency(parseResult.totalCalculatedBalance)}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ===== BIG PRIZE WINNING TICKETS RECEIVED SECTION ===== */}
-          <BigPrizeTicketsSection
-            selectedDate={selectedDate}
-            userEmail={user.email || "Authorized Officer"}
-            onSummaryChange={setBigPrizeSummary}
-          />
-
-          {/* ===== SUMMARY CARDS COMPONENT ===== */}
-          {report && (
-            <DailyBalanceSummaryCards
-              report={report}
-              progress={progressSummary}
-              selectedDate={selectedDate}
-              bigPrizeSummary={bigPrizeSummary}
-            />
-          )}
-
-          {/* ===== SEQUENTIAL CHECKING MODE (FOCUSED VIEW) ===== */}
-          {report && isSequentialMode && (
-            <SequentialBalanceChecker
-              rows={rows}
-              currentIndex={sequentialIndex}
-              onIndexChange={(idx) => setSequentialIndex(idx)}
-              onConfirmAndNext={handleSequentialConfirmAndNext}
-              onToggleStatus={handleToggleRowCheck}
-              onClose={() => setIsSequentialMode(false)}
-              isProcessing={checkingRowId !== null}
-            />
-          )}
-
-          {/* ===== EMPTY STATE / EXCEL UPLOAD WHEN NO REPORT EXISTS ===== */}
+          {/* EMPTY STATE / EXCEL UPLOAD WHEN NO REPORT EXISTS */}
           {!report && !isLoadingReport && (
             <div className="rounded-2xl border-2 border-dashed border-slate-300 bg-white p-8 md:p-12 text-center space-y-5 shadow-xs">
               <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -832,13 +779,40 @@ export default function DailyBalancePage() {
                 </div>
               </div>
 
-              {isParsing && (
-                <div className="flex items-center justify-center gap-2 text-xs text-slate-600 pt-2">
+              {(isParsing || isSavingReport) && (
+                <div className="flex items-center justify-center gap-2 text-xs text-slate-600 pt-2 font-medium">
                   <span className="inline-block animate-spin">⏳</span>
-                  <span>Analyzing Excel structure and detecting headers…</span>
+                  <span>
+                    {isSavingReport
+                      ? "Saving Daily Balance Report to database…"
+                      : "Analyzing Excel structure and detecting headers…"}
+                  </span>
                 </div>
               )}
             </div>
+          )}
+
+          {/* SUMMARY CARDS COMPONENT (WHEN REPORT EXISTS) */}
+          {report && (
+            <DailyBalanceSummaryCards
+              report={report}
+              progress={progressSummary}
+              selectedDate={selectedDate}
+              bigPrizeSummary={bigPrizeSummary}
+            />
+          )}
+
+          {/* SEQUENTIAL CHECKING MODE (FOCUSED VIEW) */}
+          {report && isSequentialMode && (
+            <SequentialBalanceChecker
+              rows={rows}
+              currentIndex={sequentialIndex}
+              onIndexChange={(idx) => setSequentialIndex(idx)}
+              onConfirmAndNext={handleSequentialConfirmAndNext}
+              onToggleStatus={handleToggleRowCheck}
+              onClose={() => setIsSequentialMode(false)}
+              isProcessing={checkingRowId !== null}
+            />
           )}
 
           {/* ===== MAIN TABLE SECTION (WHEN REPORT EXISTS) ===== */}
@@ -944,15 +918,15 @@ export default function DailyBalancePage() {
                 </div>
               </div>
 
-              {/* Table Container */}
-              <div className="overflow-x-auto rounded-lg border border-slate-200">
+              {/* Table Container with Height Limit and Sticky Header */}
+              <div className="max-h-[540px] overflow-y-auto overflow-x-auto rounded-lg border border-slate-200 relative">
                 <table className="w-full border-collapse text-left text-xs">
-                  {/* Table Header */}
-                  <thead>
+                  {/* Sticky Table Header */}
+                  <thead className="sticky top-0 z-10 bg-slate-100 shadow-2xs">
                     <tr className="border-b border-slate-300 bg-slate-100 font-semibold text-slate-700">
                       <th
                         onClick={() => handleColumnSort("serial")}
-                        className="py-3 px-3 cursor-pointer hover:bg-slate-200 transition"
+                        className="py-3 px-3 cursor-pointer hover:bg-slate-200 transition bg-slate-100"
                       >
                         <div className="flex items-center gap-1">
                           <span>Serial No.</span>
@@ -963,7 +937,7 @@ export default function DailyBalancePage() {
                       </th>
                       <th
                         onClick={() => handleColumnSort("agent")}
-                        className="py-3 px-3 cursor-pointer hover:bg-slate-200 transition"
+                        className="py-3 px-3 cursor-pointer hover:bg-slate-200 transition bg-slate-100"
                       >
                         <div className="flex items-center gap-1">
                           <span>Agent Name</span>
@@ -974,7 +948,7 @@ export default function DailyBalancePage() {
                       </th>
                       <th
                         onClick={() => handleColumnSort("win")}
-                        className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200 transition"
+                        className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200 transition bg-slate-100"
                       >
                         <div className="flex items-center justify-end gap-1">
                           <span>WIN</span>
@@ -985,7 +959,7 @@ export default function DailyBalancePage() {
                       </th>
                       <th
                         onClick={() => handleColumnSort("cash")}
-                        className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200 transition"
+                        className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200 transition bg-slate-100"
                       >
                         <div className="flex items-center justify-end gap-1">
                           <span>CASH &amp; CHE.</span>
@@ -996,7 +970,7 @@ export default function DailyBalancePage() {
                       </th>
                       <th
                         onClick={() => handleColumnSort("balance")}
-                        className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200 transition"
+                        className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200 transition bg-slate-100"
                       >
                         <div className="flex items-center justify-end gap-1">
                           <span>Balance</span>
@@ -1007,7 +981,7 @@ export default function DailyBalancePage() {
                       </th>
                       <th
                         onClick={() => handleColumnSort("status")}
-                        className="py-3 px-3 text-center cursor-pointer hover:bg-slate-200 transition"
+                        className="py-3 px-3 text-center cursor-pointer hover:bg-slate-200 transition bg-slate-100"
                       >
                         <div className="flex items-center justify-center gap-1">
                           <span>Status</span>
@@ -1016,20 +990,20 @@ export default function DailyBalancePage() {
                           )}
                         </div>
                       </th>
-                      <th className="py-3 px-3 text-center">Action</th>
+                      <th className="py-3 px-3 text-center bg-slate-100">Action</th>
                     </tr>
                   </thead>
 
                   {/* Table Body */}
                   <tbody className="divide-y divide-slate-200 bg-white">
-                    {filteredAndSortedRows.length === 0 ? (
+                    {paginatedRows.length === 0 ? (
                       <tr>
                         <td colSpan={7} className="py-8 text-center text-slate-500">
                           No matching records found.
                         </td>
                       </tr>
                     ) : (
-                      filteredAndSortedRows.map((row) => {
+                      paginatedRows.map((row) => {
                         const isChecking = checkingRowId === row.id;
                         const isPositive = row.balance >= 0;
 
@@ -1121,17 +1095,92 @@ export default function DailyBalancePage() {
                 </table>
               </div>
 
-              {/* Table Footer info */}
-              <div className="flex flex-wrap items-center justify-between text-xs text-slate-500 pt-2">
-                <span>
-                  Showing {filteredAndSortedRows.length} of {rows.length} total records
-                </span>
-                <span>
-                  All rows are treated as individual balancing items (no grouping).
-                </span>
+              {/* Table Footer with Pagination Controls */}
+              <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600 pt-3 border-t border-slate-200">
+                <div className="flex items-center gap-2">
+                  <span>
+                    Showing <b className="text-slate-900">{totalItems === 0 ? 0 : startIndex + 1}</b> – <b className="text-slate-900">{endIndex}</b> of <b className="text-slate-900">{totalItems}</b> records
+                    {filteredAndSortedRows.length !== rows.length && (
+                      <span className="text-slate-400 ml-1">({rows.length} total)</span>
+                    )}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Rows per page selector */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-500">Rows per page:</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                    >
+                      <option value={15}>15</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                      <option value={-1}>All</option>
+                    </select>
+                  </div>
+
+                  {/* Navigation buttons */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={safeCurrentPage <= 1}
+                      onClick={() => setCurrentPage(1)}
+                      className="p-1.5 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition text-slate-700"
+                      title="First Page"
+                    >
+                      <ChevronsLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={safeCurrentPage <= 1}
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      className="p-1.5 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition text-slate-700"
+                      title="Previous Page"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+
+                    <span className="px-2.5 py-1 text-xs font-bold text-slate-800 bg-slate-50 rounded border border-slate-200">
+                      Page {safeCurrentPage} of {totalPages}
+                    </span>
+
+                    <button
+                      type="button"
+                      disabled={safeCurrentPage >= totalPages}
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      className="p-1.5 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition text-slate-700"
+                      title="Next Page"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={safeCurrentPage >= totalPages}
+                      onClick={() => setCurrentPage(totalPages)}
+                      className="p-1.5 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition text-slate-700"
+                      title="Last Page"
+                    >
+                      <ChevronsRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
+
+          {/* ===== 2. BIG PRIZE WINNING TICKETS RECEIVED SECTION ===== */}
+          <BigPrizeTicketsSection
+            selectedDate={selectedDate}
+            userEmail={user.email || "Authorized Officer"}
+            onSummaryChange={setBigPrizeSummary}
+          />
 
           {/* ===== MODAL: OVERWRITE / REPLACE WARNING ===== */}
           {showReplaceModal && stagedFile && (

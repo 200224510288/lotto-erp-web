@@ -18,6 +18,10 @@ import {
   Users,
   Archive,
   X,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 import {
   BigPrizeWinningTicket,
@@ -91,6 +95,24 @@ export default function BigPrizeTicketsSection({
   // Deleted Archive Modal State
   const [showDeletedModal, setShowDeletedModal] = useState<boolean>(false);
   const [deletedSearchQuery, setDeletedSearchQuery] = useState<string>("");
+
+  // Pagination State for Tickets Table
+  const [ticketPageSize, setTicketPageSize] = useState<number>(15);
+  const [ticketCurrentPage, setTicketCurrentPage] = useState<number>(1);
+
+  // Pagination State for Deleted Archive Modal
+  const [deletedPageSize, setDeletedPageSize] = useState<number>(10);
+  const [deletedCurrentPage, setDeletedCurrentPage] = useState<number>(1);
+
+  // Reset ticket pagination when filters or search change
+  useEffect(() => {
+    setTicketCurrentPage(1);
+  }, [filterTab, searchQuery, ticketPageSize, selectedDate]);
+
+  // Reset deleted pagination when search or modal open changes
+  useEffect(() => {
+    setDeletedCurrentPage(1);
+  }, [deletedSearchQuery, deletedPageSize, showDeletedModal]);
 
   // Refs for keyboard navigation between fields
   const lotteryInputRef = useRef<HTMLInputElement>(null);
@@ -166,6 +188,18 @@ export default function BigPrizeTicketsSection({
         (t.agentOrCustomer && t.agentOrCustomer.toLowerCase().includes(q))
     );
   }, [deletedTickets, deletedSearchQuery]);
+
+  // Pagination calculations for Deleted Archive Modal
+  const totalFilteredDeleted = filteredDeletedTickets.length;
+  const effectiveDeletedPageSize =
+    deletedPageSize === -1 ? (totalFilteredDeleted || 1) : deletedPageSize;
+  const totalDeletedPages = Math.max(1, Math.ceil(totalFilteredDeleted / effectiveDeletedPageSize));
+  const safeDeletedCurrentPage = Math.min(Math.max(1, deletedCurrentPage), totalDeletedPages);
+  const deletedStartIndex = (safeDeletedCurrentPage - 1) * effectiveDeletedPageSize;
+  const deletedEndIndex = Math.min(deletedStartIndex + effectiveDeletedPageSize, totalFilteredDeleted);
+  const paginatedDeletedTickets = useMemo(() => {
+    return filteredDeletedTickets.slice(deletedStartIndex, deletedEndIndex);
+  }, [filteredDeletedTickets, deletedStartIndex, deletedEndIndex]);
 
   // Summary metrics (calculated on active tickets only)
   const summary: BigPrizeSummary = useMemo(() => {
@@ -453,6 +487,18 @@ export default function BigPrizeTicketsSection({
 
     return result;
   }, [activeTickets, deletedTickets, filterTab, searchQuery]);
+
+  // Pagination calculations for Tickets Table
+  const totalFilteredTickets = filteredTickets.length;
+  const effectiveTicketPageSize =
+    ticketPageSize === -1 ? (totalFilteredTickets || 1) : ticketPageSize;
+  const totalTicketPages = Math.max(1, Math.ceil(totalFilteredTickets / effectiveTicketPageSize));
+  const safeTicketCurrentPage = Math.min(Math.max(1, ticketCurrentPage), totalTicketPages);
+  const ticketStartIndex = (safeTicketCurrentPage - 1) * effectiveTicketPageSize;
+  const ticketEndIndex = Math.min(ticketStartIndex + effectiveTicketPageSize, totalFilteredTickets);
+  const paginatedTickets = useMemo(() => {
+    return filteredTickets.slice(ticketStartIndex, ticketEndIndex);
+  }, [filteredTickets, ticketStartIndex, ticketEndIndex]);
 
   return (
     <section className="rounded-xl border border-slate-300 bg-white shadow-xs overflow-hidden">
@@ -809,32 +855,32 @@ export default function BigPrizeTicketsSection({
           </div>
         </div>
 
-        {/* ===== TICKETS TABLE ===== */}
-        <div className="overflow-x-auto rounded-lg border border-slate-200">
+        {/* ===== TICKETS TABLE (WITH HEIGHT LIMIT & STICKY HEADER) ===== */}
+        <div className="max-h-[460px] overflow-y-auto overflow-x-auto rounded-lg border border-slate-200 relative">
           <table className="w-full border-collapse text-left text-sm">
-            <thead>
+            <thead className="sticky top-0 z-10 shadow-2xs">
               {filterTab === "deleted" ? (
                 /* DELETED VIEW HEADER: NO ACTIONS, READ-ONLY AUDIT */
-                <tr className="border-b border-slate-200 bg-rose-50/80 font-semibold text-rose-950 text-xs sm:text-sm">
-                  <th className="py-3 px-3.5 w-12 text-center">#</th>
-                  <th className="py-3 px-3.5">Lottery Game</th>
-                  <th className="py-3 px-3.5">Agent / Note</th>
-                  <th className="py-3 px-3.5 text-right">Claim Amount</th>
-                  <th className="py-3 px-3.5">Added Time</th>
-                  <th className="py-3 px-3.5">Scanned Time</th>
-                  <th className="py-3 px-3.5">Deleted Time</th>
+                <tr className="border-b border-slate-200 bg-rose-100 font-semibold text-rose-950 text-xs sm:text-sm">
+                  <th className="py-3 px-3.5 w-12 text-center bg-rose-100">#</th>
+                  <th className="py-3 px-3.5 bg-rose-100">Lottery Game</th>
+                  <th className="py-3 px-3.5 bg-rose-100">Agent / Note</th>
+                  <th className="py-3 px-3.5 text-right bg-rose-100">Claim Amount</th>
+                  <th className="py-3 px-3.5 bg-rose-100">Added Time</th>
+                  <th className="py-3 px-3.5 bg-rose-100">Scanned Time</th>
+                  <th className="py-3 px-3.5 bg-rose-100">Deleted Time</th>
                 </tr>
               ) : (
                 /* ACTIVE VIEW HEADER */
                 <tr className="border-b border-slate-200 bg-slate-100 font-semibold text-slate-700 text-xs sm:text-sm">
-                  <th className="py-3 px-3.5 w-12 text-center">#</th>
-                  <th className="py-3 px-3.5">Lottery Game</th>
-                  <th className="py-3 px-3.5">Agent / Note</th>
-                  <th className="py-3 px-3.5 text-right">Claim Amount</th>
-                  <th className="py-3 px-3.5">Added Time</th>
-                  <th className="py-3 px-3.5">Scanned Time</th>
-                  <th className="py-3 px-3.5 text-center">Cashier Scan</th>
-                  <th className="py-3 px-3.5 text-center w-24">Actions</th>
+                  <th className="py-3 px-3.5 w-12 text-center bg-slate-100">#</th>
+                  <th className="py-3 px-3.5 bg-slate-100">Lottery Game</th>
+                  <th className="py-3 px-3.5 bg-slate-100">Agent / Note</th>
+                  <th className="py-3 px-3.5 text-right bg-slate-100">Claim Amount</th>
+                  <th className="py-3 px-3.5 bg-slate-100">Added Time</th>
+                  <th className="py-3 px-3.5 bg-slate-100">Scanned Time</th>
+                  <th className="py-3 px-3.5 text-center bg-slate-100">Cashier Scan</th>
+                  <th className="py-3 px-3.5 text-center w-24 bg-slate-100">Actions</th>
                 </tr>
               )}
             </thead>
@@ -848,7 +894,7 @@ export default function BigPrizeTicketsSection({
                     Loading records…
                   </td>
                 </tr>
-              ) : filteredTickets.length === 0 ? (
+              ) : paginatedTickets.length === 0 ? (
                 <tr>
                   <td
                     colSpan={filterTab === "deleted" ? 7 : 8}
@@ -862,7 +908,7 @@ export default function BigPrizeTicketsSection({
                   </td>
                 </tr>
               ) : (
-                filteredTickets.map((ticket, index) => {
+                paginatedTickets.map((ticket, index) => {
                   const isUpdating = updatingTicketId === ticket.id;
 
                   if (filterTab === "deleted") {
@@ -870,7 +916,7 @@ export default function BigPrizeTicketsSection({
                     return (
                       <tr key={ticket.id} className="bg-rose-50/20 hover:bg-rose-50/40 transition">
                         <td className="py-3 px-3.5 text-center font-mono text-slate-400 text-sm">
-                          {index + 1}
+                          {ticketStartIndex + index + 1}
                         </td>
                         <td className="py-3 px-3.5 font-semibold text-slate-900 text-sm sm:text-base">
                           {ticket.lotteryName}
@@ -910,7 +956,7 @@ export default function BigPrizeTicketsSection({
                     >
                       {/* # */}
                       <td className="py-3 px-3.5 text-center font-mono text-slate-400 text-sm">
-                        {index + 1}
+                        {ticketStartIndex + index + 1}
                       </td>
 
                       {/* Lottery */}
@@ -1011,6 +1057,84 @@ export default function BigPrizeTicketsSection({
           </table>
         </div>
 
+        {/* Tickets Pagination Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm text-slate-600 pt-2 border-t border-slate-200">
+          <div className="flex items-center gap-2">
+            <span>
+              Showing <b className="text-slate-900">{totalFilteredTickets === 0 ? 0 : ticketStartIndex + 1}</b> – <b className="text-slate-900">{ticketEndIndex}</b> of <b className="text-slate-900">{totalFilteredTickets}</b> tickets
+              {totalFilteredTickets !== activeTickets.length && filterTab !== "deleted" && (
+                <span className="text-slate-400 ml-1">({activeTickets.length} active)</span>
+              )}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Rows per page selector */}
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="text-slate-500">Rows:</span>
+              <select
+                value={ticketPageSize}
+                onChange={(e) => {
+                  setTicketPageSize(Number(e.target.value));
+                  setTicketCurrentPage(1);
+                }}
+                className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-400"
+              >
+                <option value={10}>10</option>
+                <option value={15}>15</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={-1}>All</option>
+              </select>
+            </div>
+
+            {/* Navigation buttons */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                disabled={safeTicketCurrentPage <= 1}
+                onClick={() => setTicketCurrentPage(1)}
+                className="p-1.5 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition text-slate-700"
+                title="First Page"
+              >
+                <ChevronsLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                disabled={safeTicketCurrentPage <= 1}
+                onClick={() => setTicketCurrentPage((p) => Math.max(1, p - 1))}
+                className="p-1.5 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition text-slate-700"
+                title="Previous Page"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+
+              <span className="px-2.5 py-1 text-xs font-bold text-slate-800 bg-slate-50 rounded border border-slate-200">
+                Page {safeTicketCurrentPage} of {totalTicketPages}
+              </span>
+
+              <button
+                type="button"
+                disabled={safeTicketCurrentPage >= totalTicketPages}
+                onClick={() => setTicketCurrentPage((p) => Math.min(totalTicketPages, p + 1))}
+                className="p-1.5 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition text-slate-700"
+                title="Next Page"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                disabled={safeTicketCurrentPage >= totalTicketPages}
+                onClick={() => setTicketCurrentPage(totalTicketPages)}
+                className="p-1.5 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition text-slate-700"
+                title="Last Page"
+              >
+                <ChevronsRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* ===== SCANNING STAFF BALANCE VERIFICATION SECTION ===== */}
         <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 space-y-3.5 mt-5">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
@@ -1042,17 +1166,17 @@ export default function BigPrizeTicketsSection({
             </div>
           </div>
 
-          {/* Staff Table: staff name | opening balance | closing balance */}
-          <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          {/* Staff Table: staff name | opening balance | closing balance (With Height Limit & Sticky Header) */}
+          <div className="max-h-[300px] overflow-y-auto overflow-x-auto rounded-lg border border-slate-200 bg-white relative">
             <table className="w-full border-collapse text-left text-sm">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-slate-100 shadow-2xs">
                 <tr className="border-b border-slate-200 bg-slate-100 font-semibold text-slate-700 text-xs sm:text-sm">
-                  <th className="py-2.5 px-3.5">Staff Name</th>
-                  <th className="py-2.5 px-3.5">Opening (Rs.)</th>
-                  <th className="py-2.5 px-3.5">Closing (Rs.)</th>
-                  <th className="py-2.5 px-3.5 text-right">Net Scanned (Rs.)</th>
-                  <th className="py-2.5 px-3.5 text-center">Status</th>
-                  <th className="py-2.5 px-3.5 text-center w-14">Action</th>
+                  <th className="py-2.5 px-3.5 bg-slate-100">Staff Name</th>
+                  <th className="py-2.5 px-3.5 bg-slate-100">Opening (Rs.)</th>
+                  <th className="py-2.5 px-3.5 bg-slate-100">Closing (Rs.)</th>
+                  <th className="py-2.5 px-3.5 text-right bg-slate-100">Net Scanned (Rs.)</th>
+                  <th className="py-2.5 px-3.5 text-center bg-slate-100">Status</th>
+                  <th className="py-2.5 px-3.5 text-center w-14 bg-slate-100">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
@@ -1355,22 +1479,22 @@ export default function BigPrizeTicketsSection({
             </div>
 
             {/* Modal Table Content */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-5">
-              <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3">
+              <div className="max-h-[440px] overflow-y-auto overflow-x-auto rounded-lg border border-slate-200 relative">
                 <table className="w-full border-collapse text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-rose-50/80 font-semibold text-rose-950 text-xs sm:text-sm">
-                      <th className="py-2.5 px-3.5 w-12 text-center">#</th>
-                      <th className="py-2.5 px-3.5">Lottery Game</th>
-                      <th className="py-2.5 px-3.5">Agent / Note</th>
-                      <th className="py-2.5 px-3.5 text-right">Claim Amount</th>
-                      <th className="py-2.5 px-3.5">Added Time</th>
-                      <th className="py-2.5 px-3.5">Scanned Time</th>
-                      <th className="py-2.5 px-3.5">Deleted Time</th>
+                  <thead className="sticky top-0 z-10 bg-rose-100 shadow-2xs">
+                    <tr className="border-b border-slate-200 bg-rose-100 font-semibold text-rose-950 text-xs sm:text-sm">
+                      <th className="py-2.5 px-3.5 w-12 text-center bg-rose-100">#</th>
+                      <th className="py-2.5 px-3.5 bg-rose-100">Lottery Game</th>
+                      <th className="py-2.5 px-3.5 bg-rose-100">Agent / Note</th>
+                      <th className="py-2.5 px-3.5 text-right bg-rose-100">Claim Amount</th>
+                      <th className="py-2.5 px-3.5 bg-rose-100">Added Time</th>
+                      <th className="py-2.5 px-3.5 bg-rose-100">Scanned Time</th>
+                      <th className="py-2.5 px-3.5 bg-rose-100">Deleted Time</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 bg-white text-sm">
-                    {filteredDeletedTickets.length === 0 ? (
+                    {paginatedDeletedTickets.length === 0 ? (
                       <tr>
                         <td
                           colSpan={7}
@@ -1382,13 +1506,13 @@ export default function BigPrizeTicketsSection({
                         </td>
                       </tr>
                     ) : (
-                      filteredDeletedTickets.map((ticket, index) => (
+                      paginatedDeletedTickets.map((ticket, index) => (
                         <tr
                           key={ticket.id}
                           className="bg-rose-50/20 hover:bg-rose-50/40 transition"
                         >
                           <td className="py-2.5 px-3.5 text-center font-mono text-slate-400 text-sm">
-                            {index + 1}
+                            {deletedStartIndex + index + 1}
                           </td>
                           <td className="py-2.5 px-3.5 font-semibold text-slate-900 text-sm sm:text-base">
                             {ticket.lotteryName}
@@ -1419,6 +1543,74 @@ export default function BigPrizeTicketsSection({
                     )}
                   </tbody>
                 </table>
+              </div>
+
+              {/* Modal Pagination Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600 pt-1">
+                <div>
+                  Showing <b className="text-slate-900">{totalFilteredDeleted === 0 ? 0 : deletedStartIndex + 1}</b> – <b className="text-slate-900">{deletedEndIndex}</b> of <b className="text-slate-900">{totalFilteredDeleted}</b> deleted records
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-xs">
+                    <span className="text-slate-500">Rows:</span>
+                    <select
+                      value={deletedPageSize}
+                      onChange={(e) => {
+                        setDeletedPageSize(Number(e.target.value));
+                        setDeletedCurrentPage(1);
+                      }}
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                    >
+                      <option value={10}>10</option>
+                      <option value={20}>20</option>
+                      <option value={50}>50</option>
+                      <option value={-1}>All</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={safeDeletedCurrentPage <= 1}
+                      onClick={() => setDeletedCurrentPage(1)}
+                      className="p-1 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition text-slate-700"
+                      title="First Page"
+                    >
+                      <ChevronsLeft className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={safeDeletedCurrentPage <= 1}
+                      onClick={() => setDeletedCurrentPage((p) => Math.max(1, p - 1))}
+                      className="p-1 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition text-slate-700"
+                      title="Previous Page"
+                    >
+                      <ChevronLeft className="w-3 h-3" />
+                    </button>
+                    <span className="px-2 py-0.5 text-xs font-bold text-slate-800 bg-slate-50 rounded border border-slate-200">
+                      {safeDeletedCurrentPage} / {totalDeletedPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={safeDeletedCurrentPage >= totalDeletedPages}
+                      onClick={() => setDeletedCurrentPage((p) => Math.min(totalDeletedPages, p + 1))}
+                      className="p-1 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition text-slate-700"
+                      title="Next Page"
+                    >
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={safeDeletedCurrentPage >= totalDeletedPages}
+                      onClick={() => setDeletedCurrentPage(totalDeletedPages)}
+                      className="p-1 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition text-slate-700"
+                      title="Last Page"
+                    >
+                      <ChevronsRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
