@@ -763,7 +763,7 @@ const list = await listReturnUploadedFilesByDate(dateKey);
             {fileConfigs.length > 0 && (
               <div className="space-y-3">
                 {/* Save All Control Bar */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg shadow-sm">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold text-blue-800 bg-blue-100 rounded-full">

@@ -10,6 +10,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPM: "SRM",
     VM: "DMO",
     SM: "JMO",
+    WM: "WMO",
   },
   Tuesday: {
     LWA: "LWT",
@@ -20,6 +21,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPA: "SRT",
     VA: "DTU",
     SA: "JST",
+    WA: "WTU",
   },
   Wednesday: {
     LWW: "LWW",
@@ -30,6 +32,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPW: "SWD",
     VW: "DWD",
     SW: "JSW",
+    WW: "WWD",
   },
   Thursday: {
     LWB: "LTH",
@@ -40,6 +43,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPT: "STH",
     VT: "DTH",
     ST: "JTH",
+    WT: "WTH",
   },
   Friday: {
     LWF: "LWF",
@@ -50,6 +54,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPF: "SRF",
     VF: "DFI",
     SF: "JFR",
+    WF: "WFR",
   },
   Saturday: {
     LWS: "LSA",
@@ -60,6 +65,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPS: "SRS",
     VS: "DSA",
     SS: "JSA",
+    WS: "WSA",
   },
   Sunday: {
     LWI: "LWS",
@@ -70,6 +76,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPI: "SRU",
     VI: "DSU",
     SI: "JSU",
+    WI: "WSU",
   },
 };
 

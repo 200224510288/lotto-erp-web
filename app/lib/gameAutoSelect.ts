@@ -10,6 +10,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPM: "SRM",
     VM: "DMO",
     SM: "JMO",
+    WM: "WMO",
   },
   Tuesday: {
     LWA: "LWT",
@@ -20,6 +21,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPA: "SRT",
     VA: "DTU",
     SA: "JST",
+    WA: "WTU",
   },
   Wednesday: {
     LWW: "LWW",
@@ -30,6 +32,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPW: "SWD",
     VW: "DWD",
     SW: "JSW",
+    WW: "WWD",
   },
   Thursday: {
     LWB: "LTH",
@@ -40,6 +43,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPT: "STH",
     VT: "DTH",
     ST: "JTH",
+    WT: "WTH",
   },
   Friday: {
     LWF: "LWF",
@@ -50,6 +54,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPF: "SRF",
     VF: "DFI",
     SF: "JFR",
+    WF: "WFR",
   },
   Saturday: {
     LWS: "LSA",
@@ -60,6 +65,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPS: "SRS",
     VS: "DSA",
     SS: "JSA",
+    WS: "WSA",
   },
   Sunday: {
     LWI: "LWS",
@@ -70,6 +76,7 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
     SPI: "SRU",
     VI: "DSU",
     SI: "JSU",
+    WI: "WSU",
   },
 };
 
@@ -237,13 +244,37 @@ export function suggestGameFromFileName(fileName: string, dateYYYYMMDD: string):
   };
 }
 
-// Build official game list for dropdown (if you still want to display it)
-export const OFFICIAL_GAMES: { id: string; name: string }[] = (() => {
+/**
+ * Update the active in-memory ERP game map dynamically (e.g. from Firestore/config modal)
+ */
+export function updateActiveGameMap(newMap: Record<string, Record<string, string>>): void {
+  for (const day of Object.keys(ERP_GAME_MAP)) {
+    delete ERP_GAME_MAP[day];
+  }
+  for (const [day, dayObj] of Object.entries(newMap)) {
+    ERP_GAME_MAP[day] = { ...dayObj };
+  }
+}
+
+/**
+ * Returns the sorted list of official games from the active game map
+ */
+export function getActiveOfficialGames(customMap?: Record<string, Record<string, string>>): { id: string; name: string }[] {
+  const map = customMap || ERP_GAME_MAP;
   const set = new Set<string>();
-  for (const day of Object.keys(ERP_GAME_MAP) as DayName[]) {
-    for (const official of Object.values(ERP_GAME_MAP[day])) set.add(official);
+  for (const day of Object.keys(map) as DayName[]) {
+    if (map[day]) {
+      for (const official of Object.values(map[day])) {
+        if (official) set.add(official.toUpperCase());
+      }
+    }
   }
   return Array.from(set)
     .sort((a, b) => a.localeCompare(b))
     .map((x) => ({ id: x, name: x }));
+}
+
+// Build official game list for dropdown (default fallback)
+export const OFFICIAL_GAMES: { id: string; name: string }[] = (() => {
+  return getActiveOfficialGames();
 })();

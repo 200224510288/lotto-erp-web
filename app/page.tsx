@@ -35,7 +35,13 @@ import { validateFileData } from "./lib/fileValidation";
 import DealerAliasEditor from "./components/DealerAliasEditor";
 import MasterDealerEditor from "./components/MasterDealerEditor";
 
-import { OFFICIAL_GAMES, suggestGameFromFileName } from "./lib/gameAutoSelect";
+import {
+  OFFICIAL_GAMES,
+  suggestGameFromFileName,
+  getActiveOfficialGames,
+} from "./lib/gameAutoSelect";
+import DlbLotteryManagerModal from "./components/DlbLotteryManagerModal";
+import { loadDlbGames } from "./lib/dlbGameConfig";
 
 // Per-file available block for today’s stock
 type AvailabilityBlock = {
@@ -224,6 +230,20 @@ export default function HomePage() {
   const [showRobotInstructionsModal, setShowRobotInstructionsModal] = useState(false);
   const [showInitialWelcomeModal, setShowInitialWelcomeModal] = useState(true);
   const [showDeleteOldFilesModal, setShowDeleteOldFilesModal] = useState(false);
+  const [isLotteryModalOpen, setIsLotteryModalOpen] = useState(false);
+  const [availableGames, setAvailableGames] = useState<{ id: string; name: string }[]>(OFFICIAL_GAMES);
+
+  // Sync DLB lottery games from Firestore on mount
+  useEffect(() => {
+    loadDlbGames().then(() => {
+      setAvailableGames(getActiveOfficialGames());
+    });
+  }, []);
+
+  function handleGamesUpdated() {
+    setAvailableGames(getActiveOfficialGames());
+    setFileConfigs((prev) => applyAutoDetection(selectedDate, prev));
+  }
 
   // ------------- Open DLB website -------------
   function openDLBWebsite() {
@@ -936,6 +956,16 @@ export default function HomePage() {
                 NLB Sales Upload
               </Link>
 
+              {/* Manage DLB Lotteries */}
+              <button
+                type="button"
+                onClick={() => setIsLotteryModalOpen(true)}
+                className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Manage DLB lottery games and weekly ERP code mappings"
+              >
+                <span>⚙️ Manage DLB Lotteries</span>
+              </button>
+
               {/* Logout */}
               <button
                 type="button"
@@ -1098,10 +1128,21 @@ export default function HomePage() {
 
         {/* Dealer Configuration */}
         <section className="border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-3">
-          <h2 className="text-sm font-medium text-gray-800">Dealer Mapping Configuration</h2>
-          <p className="text-[11px] text-gray-600">
-            Configure how ERP dealer codes are normalized. The master dealer receives credit, alias dealers are mapped to it.
-          </p>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <h2 className="text-sm font-medium text-gray-800">Dealer & Lottery Configuration</h2>
+              <p className="text-[11px] text-gray-600">
+                Configure how ERP dealer codes are normalized and manage weekly lottery draw game mappings.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsLotteryModalOpen(true)}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg text-xs shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <span>⚙️ Manage DLB Games</span>
+            </button>
+          </div>
           <MasterDealerEditor />
           <DealerAliasEditor />
         </section>
@@ -1391,7 +1432,7 @@ export default function HomePage() {
                           className="w-full rounded border border-gray-300 px-2 py-1 text-sm bg-gray-100 cursor-not-allowed"
                         >
                           <option value="">-- Auto selected --</option>
-                          {OFFICIAL_GAMES.map((g: (typeof OFFICIAL_GAMES)[0]) => (
+                          {availableGames.map((g) => (
                             <option key={g.id} value={g.id}>
                               {g.name}
                             </option>
@@ -1762,6 +1803,13 @@ export default function HomePage() {
             </div>
           </div>
         )}
+
+        {/* DLB Lottery Games Manager Modal */}
+        <DlbLotteryManagerModal
+          isOpen={isLotteryModalOpen}
+          onClose={() => setIsLotteryModalOpen(false)}
+          onGamesUpdated={handleGamesUpdated}
+        />
       </div>
     </main>
   );

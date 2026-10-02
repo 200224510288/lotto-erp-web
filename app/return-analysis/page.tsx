@@ -12,13 +12,13 @@ import { listReturnUploadedFilesByDate, listReturnUploadedFilesByDateRange, Retu
  * Allowed lottery types per weekday (ERP codes are treated as lottery types)
  */
 export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
-  Monday: { LWM: "LMO", AKM: "AMO", SFM: "SFM", SBM: "SBM", KTM: "KPM", SPM: "SRM", VM: "DMO", SM: "JMO" },
-  Tuesday: { LWA: "LWT", AKA: "ATU", SFA: "SFT", SBA: "BTU", KTT: "KPT", SPA: "SRT", VA: "DTU", SA: "JST" },
-  Wednesday: { LWW: "LWW", AKW: "AWD", SFW: "SFW", SBW: "SBW", KTW: "KPW", SPW: "SWD", VW: "DWD", SW: "JSW" },
-  Thursday: { LWB: "LTH", AKT: "ATH", SFT: "SFH", SBT: "SBT", KTB: "KTH", SPT: "STH", VT: "DTH", ST: "JTH" },
-  Friday: { LWF: "LWF", AKF: "AFR", SFF: "SFR", SBF: "SBF", KTF: "KPF", SPF: "SRF", VF: "DFI", SF: "JFR" },
-  Saturday: { LWS: "LSA", AKS: "ASA", SFS: "SFS", SBS: "SBS", KTS: "KSA", SPS: "SRS", VS: "DSA", SS: "JSA" },
-  Sunday: { LWI: "LWS", AKI: "ASU", SFI: "SFU", SBI: "SSU", KTI: "KPS", SPI: "SRU", VI: "DSU", SI: "JSU" },
+  Monday: { LWM: "LMO", AKM: "AMO", SFM: "SFM", SBM: "SBM", KTM: "KPM", SPM: "SRM", VM: "DMO", SM: "JMO", WM: "WMO" },
+  Tuesday: { LWA: "LWT", AKA: "ATU", SFA: "SFT", SBA: "BTU", KTT: "KPT", SPA: "SRT", VA: "DTU", SA: "JST", WA: "WTU" },
+  Wednesday: { LWW: "LWW", AKW: "AWD", SFW: "SFW", SBW: "SBW", KTW: "KPW", SPW: "SWD", VW: "DWD", SW: "JSW", WW: "WWD" },
+  Thursday: { LWB: "LTH", AKT: "ATH", SFT: "SFH", SBT: "SBT", KTB: "KTH", SPT: "STH", VT: "DTH", ST: "JTH", WT: "WTH" },
+  Friday: { LWF: "LWF", AKF: "AFR", SFF: "SFR", SBF: "SBF", KTF: "KPF", SPF: "SRF", VF: "DFI", SF: "JFR", WF: "WFR" },
+  Saturday: { LWS: "LSA", AKS: "ASA", SFS: "SFS", SBS: "SBS", KTS: "KSA", SPS: "SRS", VS: "DSA", SS: "JSA", WS: "WSA" },
+  Sunday: { LWI: "LWS", AKI: "ASU", SFI: "SFU", SBI: "SSU", KTI: "KPS", SPI: "SRU", VI: "DSU", SI: "JSU", WI: "WSU" },
 };
 
 type SaleRow = { agentCode: string; qty: number; agentName?: string };

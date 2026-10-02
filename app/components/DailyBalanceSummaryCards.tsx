@@ -118,7 +118,7 @@ export default function DailyBalanceSummaryCards({
       {/* ===== 4 Large Summary Cards ===== */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total CASH & CHE. */}
-        <div className="relative overflow-hidden rounded-xl border border-teal-200 bg-gradient-to-br from-teal-50 to-white p-4 shadow-sm transition hover:shadow-md">
+        <div className="relative overflow-hidden rounded-xl border border-teal-200 bg-teal-50/60 p-4 shadow-sm transition hover:shadow-md">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-teal-800">
               Total CASH &amp; CHE.
@@ -136,7 +136,7 @@ export default function DailyBalanceSummaryCards({
         </div>
 
         {/* Total WIN */}
-        <div className="relative overflow-hidden rounded-xl border border-purple-200 bg-gradient-to-br from-purple-50 to-white p-4 shadow-sm transition hover:shadow-md">
+        <div className="relative overflow-hidden rounded-xl border border-purple-200 bg-purple-50/60 p-4 shadow-sm transition hover:shadow-md">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-purple-800">
               Total WIN
@@ -157,8 +157,8 @@ export default function DailyBalanceSummaryCards({
         <div
           className={`relative overflow-hidden rounded-xl border p-4 shadow-sm transition hover:shadow-md ${
             isBalancePositive
-              ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white"
-              : "border-rose-300 bg-gradient-to-br from-rose-50 to-white"
+              ? "border-emerald-300 bg-emerald-50/60"
+              : "border-rose-300 bg-rose-50/60"
           }`}
         >
           <div className="flex items-center justify-between">
@@ -194,7 +194,7 @@ export default function DailyBalanceSummaryCards({
         </div>
 
         {/* Total Records */}
-        <div className="relative overflow-hidden rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4 shadow-sm transition hover:shadow-md">
+        <div className="relative overflow-hidden rounded-xl border border-blue-200 bg-blue-50/60 p-4 shadow-sm transition hover:shadow-md">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-blue-800">
               Total Records

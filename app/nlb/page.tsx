@@ -30,6 +30,8 @@ import NlbMasterAgentEditor from "../components/NlbMasterAgentEditor";
 import NlbAgentAliasEditor from "../components/NlbAgentAliasEditor";
 import { getNlbAgentAliases } from "../lib/nlbAgentConfig";
 import { validateFileData } from "../lib/fileValidation";
+import NlbLotteryManagerModal from "../components/NlbLotteryManagerModal";
+import { loadNlbLotteries, getActiveNlbCodes } from "../lib/nlbLotteryConfig";
 
 /* =====================================================
    TYPES
@@ -339,6 +341,16 @@ export default function NlbPreprocessPage() {
 
   // Popup Preview Modal state
   const [previewModal, setPreviewModal] = useState<ModalPreviewData | null>(null);
+
+  // NLB Lotteries dynamic modal state
+  const [isNlbLotteryModalOpen, setIsNlbLotteryModalOpen] = useState(false);
+  const [activeNlbCodes, setActiveNlbCodes] = useState<string[]>([...ALLOWED_CODES]);
+
+  useEffect(() => {
+    loadNlbLotteries().then((list) => {
+      setActiveNlbCodes(getActiveNlbCodes(list));
+    });
+  }, []);
 
   /* ---- Load saved files from Firebase for selectedDate ---- */
 
@@ -1201,6 +1213,14 @@ export default function NlbPreprocessPage() {
           <div className="flex flex-col items-end gap-2 shrink-0">
             {/* Primary Navigation Row */}
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsNlbLotteryModalOpen(true)}
+                className="px-3.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                title="Manage NLB lotteries, report codes, and aliases"
+              >
+                <span>⚙️ Manage NLB Lotteries</span>
+              </button>
               <Link
                 href="/nlb-returns"
                 className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
@@ -1271,16 +1291,25 @@ export default function NlbPreprocessPage() {
             AGENT MAPPING CONFIGURATION (NLB SPECIFIC)
             ===================================================== */}
         <section className="border border-gray-200 rounded-xl p-5 bg-gray-50/70 space-y-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-slate-700"></span>
-              <h2 className="text-sm font-bold text-gray-900">
-                NLB Agent Mapping Configuration
-              </h2>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-slate-700"></span>
+                <h2 className="text-sm font-bold text-gray-900">
+                  NLB Agent &amp; Lottery Configuration
+                </h2>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Configure how NLB agent codes and lottery games are mapped, normalized, and accepted.
+              </p>
             </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Configure how NLB agent codes are normalized. Alias agent codes are automatically mapped to their primary agent code during file preprocessing and export.
-            </p>
+            <button
+              type="button"
+              onClick={() => setIsNlbLotteryModalOpen(true)}
+              className="px-3.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-semibold rounded-lg text-xs shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <span>⚙️ Manage NLB Lotteries</span>
+            </button>
           </div>
           <div className="space-y-3">
             <NlbMasterAgentEditor />
@@ -1299,9 +1328,18 @@ export default function NlbPreprocessPage() {
                 Sales Allocation Files
               </h2>
             </div>
-            <span className="text-[11px] font-mono text-teal-700 bg-teal-100/70 px-2 py-0.5 rounded">
-              {ALLOWED_CODES.join(", ")}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-mono text-teal-700 bg-teal-100/70 px-2 py-0.5 rounded">
+                {activeNlbCodes.join(", ")}
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsNlbLotteryModalOpen(true)}
+                className="text-[11px] text-teal-700 hover:text-teal-900 underline font-medium cursor-pointer"
+              >
+                Edit Lotteries
+              </button>
+            </div>
           </div>
 
           {/* Sales Drop Zone */}
@@ -2010,6 +2048,13 @@ export default function NlbPreprocessPage() {
           onClose={() => setPreviewModal(null)}
         />
       )}
+
+      {/* NLB Lottery Manager Modal */}
+      <NlbLotteryManagerModal
+        isOpen={isNlbLotteryModalOpen}
+        onClose={() => setIsNlbLotteryModalOpen(false)}
+        onLotteriesUpdated={(codes) => setActiveNlbCodes(codes)}
+      />
     </main>
   );
 }
@@ -2292,7 +2337,7 @@ function FilePreviewModal({
         {/* Modal KPI Summary Cards */}
         <div className="px-6 py-3.5 bg-white border-b border-gray-100 flex items-center gap-4 flex-wrap">
           {/* Bigger, High-Prominence Draw Number */}
-          <div className="flex items-center gap-2.5 bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-2 rounded-xl border border-blue-300 shadow-xs">
+          <div className="flex items-center gap-2.5 bg-blue-50 px-4 py-2 rounded-xl border border-blue-300 shadow-xs">
             <span className="text-blue-800 font-bold text-xs uppercase tracking-wider">Draw No:</span>
             <span className="font-mono font-black text-blue-950 text-2xl tracking-tight leading-none">
               {data.drawNumber}

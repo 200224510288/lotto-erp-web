@@ -78,6 +78,7 @@ export const LOTTERY_OPTIONS = [
   "Development Fortune",
   "Dhana Nidhanaya",
   "Handahana",
+  "Wasi",
   "NLB - Mahajana",
   "NLB - Govisetha",
   "Other / Special",
