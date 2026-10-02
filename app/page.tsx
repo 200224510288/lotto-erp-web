@@ -929,59 +929,74 @@ export default function HomePage() {
             ERP Summary → Structured Dealer Table (multi-game, per-file ranges)
           </h1>
 
-          <div className="flex flex-col items-end gap-2 shrink-0">
-            {/* Primary Navigation Row */}
-            <div className="flex items-center gap-2">
-              {/* Existing Returns Page */}
-              <Link
-                href="/returns"
-                className="px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow"
-              >
-                Go to Returns Page
-              </Link>
+          <div className="flex items-center gap-3 shrink-0 flex-wrap">
+            {/* NLB Sales Upload */}
+            <Link
+              href="/nlb"
+              className="px-5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-sm font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer"
+            >
+              <span>NLB Sales Upload</span>
+              <span className="text-base font-extrabold">→</span>
+            </Link>
 
-              {/* New Returns Analyzer */}
-              <Link
-                href="/return-analysis"
-                className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium shadow"
-              >
-                Returns Analyzer
-              </Link>
+            {/* Existing Returns Page */}
+            <Link
+              href="/returns"
+              className="px-5 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-sm font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer"
+            >
+              <span>Go to Returns Page</span>
+              <span className="text-base font-extrabold">→</span>
+            </Link>
 
-              {/* NLB Sales Upload */}
-              <Link
-                href="/nlb"
-                className="px-3 py-1.5 rounded bg-teal-600 hover:bg-teal-700 text-white text-xs font-medium shadow"
-              >
-                NLB Sales Upload
-              </Link>
+            {/* Logout */}
+            <button
+              type="button"
+              onClick={() => signOut(auth)}
+              className="px-3.5 py-2.5 rounded-xl bg-gray-700 hover:bg-gray-800 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              title="Sign out"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
 
+        {/* =====================================================
+            SERVICES & QUICK TOOLS SECTION
+            ===================================================== */}
+        <section className="bg-gray-50 border border-gray-200 rounded-xl p-4 shadow-2xs">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="text-xs font-bold text-gray-800 uppercase tracking-wide">
+                Management &amp; Services
+              </h2>
+              <p className="text-[11px] text-gray-500">
+                Manage DLB lottery game mappings, view return analytics, and organize daily cashier balances.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2.5 flex-wrap">
               {/* Manage DLB Lotteries */}
               <button
                 type="button"
                 onClick={() => setIsLotteryModalOpen(true)}
-                className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
                 title="Manage DLB lottery games and weekly ERP code mappings"
               >
                 <span>⚙️ Manage DLB Lotteries</span>
               </button>
 
-              {/* Logout */}
-              <button
-                type="button"
-                onClick={() => signOut(auth)}
-                className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium shadow"
+              {/* Returns Analyzer */}
+              <Link
+                href="/return-analysis"
+                className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
               >
-                Logout
-              </button>
-            </div>
+                <span>Returns Analyzer</span>
+              </Link>
 
-            {/* Financial Balancing Row */}
-            <div className="flex items-center gap-2">
               {/* Daily Balance Organizer */}
               <Link
                 href="/daily-balance"
-                className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow flex items-center gap-1"
+                className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
               >
                 <span>Balance Organizer</span>
               </Link>
@@ -989,13 +1004,13 @@ export default function HomePage() {
               {/* Win Scan Balancing */}
               <Link
                 href="/scan-balancing"
-                className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow flex items-center gap-1"
+                className="px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
               >
                 <span>Scan Balancing</span>
               </Link>
             </div>
           </div>
-        </div>
+        </section>
 
         {warnings.length > 0 && (
           <div className="border border-amber-300 bg-amber-50 rounded p-3 text-[12px] text-amber-900">

@@ -1210,40 +1210,15 @@ export default function NlbPreprocessPage() {
             </p>
           </div>
 
-          <div className="flex flex-col items-end gap-2 shrink-0">
-            {/* Primary Navigation Row */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsNlbLotteryModalOpen(true)}
-                className="px-3.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
-                title="Manage NLB lotteries, report codes, and aliases"
-              >
-                <span>⚙️ Manage NLB Lotteries</span>
-              </button>
-              <Link
-                href="/nlb-returns"
-                className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
-              >
-                NLB Returns →
-              </Link>
-            </div>
-
-            {/* Financial Balancing Row */}
-            <div className="flex items-center gap-2">
-              <Link
-                href="/daily-balance"
-                className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
-              >
-                Balance Organizer
-              </Link>
-              <Link
-                href="/scan-balancing"
-                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
-              >
-                Scan Balancing
-              </Link>
-            </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <Link
+              href="/nlb-returns"
+              className="px-6 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-2 border border-slate-700 tracking-wide cursor-pointer"
+              title="Navigate to NLB Returns processing"
+            >
+              <span>NLB Returns</span>
+              <span className="text-base font-extrabold">→</span>
+            </Link>
           </div>
         </div>
 
@@ -1286,6 +1261,47 @@ export default function NlbPreprocessPage() {
             {selectedDate}
           </span>
         </div>
+
+        {/* =====================================================
+            SERVICES & QUICK TOOLS SECTION
+            ===================================================== */}
+        <section className="bg-gray-50/90 border border-gray-200 rounded-xl p-4 shadow-2xs">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="text-xs font-bold text-gray-800 uppercase tracking-wide">
+                Management &amp; Services
+              </h2>
+              <p className="text-[11px] text-gray-500">
+                Manage NLB lotteries, reconcile daily balances, and verify winning scan transactions.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setIsNlbLotteryModalOpen(true)}
+                className="px-3.5 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                title="Manage NLB lotteries, report codes, and aliases"
+              >
+                <span>⚙️ Manage NLB Lotteries</span>
+              </button>
+
+              <Link
+                href="/daily-balance"
+                className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
+              >
+                <span>Balance Organizer</span>
+              </Link>
+
+              <Link
+                href="/scan-balancing"
+                className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
+              >
+                <span>Scan Balancing</span>
+              </Link>
+            </div>
+          </div>
+        </section>
 
         {/* =====================================================
             AGENT MAPPING CONFIGURATION (NLB SPECIFIC)
