@@ -256,6 +256,7 @@ export default function NlbReturnsPage() {
 
   // Action states
   const [isSavingFirebase, setIsSavingFirebase] = useState(false);
+  const [isSavingAllCloud, setIsSavingAllCloud] = useState(false);
   const [savingFileId, setSavingFileId] = useState<string | null>(null);
   const [savingLocalFileId, setSavingLocalFileId] = useState<string | null>(
     null
@@ -1089,6 +1090,84 @@ export default function NlbReturnsPage() {
     }
   }
 
+  /* ---- Save All Files to Cloud (Processes waiting files if needed, then saves all completed to Firebase) ---- */
+  async function handleSaveAllCloud() {
+    if (returnFiles.length === 0) return;
+
+    if (!selectedDate) {
+      setFeedbackMessage({
+        type: "error",
+        text: "Please pick a date before saving files to Cloud.",
+      });
+      return;
+    }
+
+    setIsSavingAllCloud(true);
+    const targetFolder = localFolderStatus?.folder || "C:\\nlb return";
+    let saved = 0;
+
+    try {
+      // 1. If any files are still waiting, process them first
+      const waitingEntries = returnFiles.filter((f) => f.status === "waiting");
+      const newlyProcessedResults = new Map<string, ReturnPreprocessResult>();
+
+      if (waitingEntries.length > 0) {
+        setIsProcessingReturns(true);
+        for (const entry of waitingEntries) {
+          const res = await processReturnEntry(entry);
+          if (res && res.status !== "failed" && res.rows && res.rows.length > 0) {
+            newlyProcessedResults.set(entry.id, res);
+          }
+        }
+        setIsProcessingReturns(false);
+      }
+
+      // 2. Upload all valid processed return files to Cloud
+      for (const entry of returnFiles) {
+        const result = entry.result || newlyProcessedResults.get(entry.id);
+        if (!result || !result.rows || result.rows.length === 0) continue;
+
+        const blob = generateReturnCleanedXlsx(result.rows);
+        const fileName = getCleanFileName(entry);
+
+        await saveNlbReturnFile(
+          blob,
+          fileName,
+          entry.code,
+          result.drawNumber || "",
+          result.rowCount,
+          result.totalReturnQuantity,
+          selectedDate,
+          targetFolder,
+          entry.file
+        );
+
+        updateReturnEntry(entry.id, { isSavedToFirebase: true });
+        saved++;
+      }
+
+      if (saved > 0) {
+        notifySaveSuccess(
+          `✓ Successfully saved all (${saved}) return file(s) to Cloud for date ${selectedDate}!`,
+          { filePath: `Cloud Storage: ${selectedDate}/ (Target: ${targetFolder})` }
+        );
+        await loadSavedReturns(selectedDate);
+      } else {
+        setFeedbackMessage({
+          type: "error",
+          text: "No valid return files could be processed and saved to Cloud. Please check file errors.",
+        });
+      }
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Error saving return files to Cloud.";
+      setFeedbackMessage({ type: "error", text: msg });
+    } finally {
+      setIsSavingAllCloud(false);
+      setIsProcessingReturns(false);
+    }
+  }
+
   /* ---- Delete Saved Records ---- */
   async function handleDeleteSaved(rec: NlbReturnFileRecord) {
     if (!confirm(`Delete saved file ${rec.fileName}?`)) return;
@@ -1621,19 +1700,44 @@ export default function NlbReturnsPage() {
                     <button
                       type="button"
                       onClick={processAllReturns}
-                      disabled={isProcessingReturns}
+                      disabled={isProcessingReturns || isSavingAllCloud}
                       className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer transition-colors"
                     >
                       {isProcessingReturns ? "Processing…" : "Process All"}
                     </button>
                   )}
+
+                  {/* Save All Cloud Option */}
+                  <button
+                    type="button"
+                    onClick={handleSaveAllCloud}
+                    disabled={
+                      isSavingAllCloud ||
+                      isSavingFirebase ||
+                      isProcessingReturns ||
+                      returnFiles.length === 0
+                    }
+                    className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer transition-all flex items-center gap-1.5"
+                    title="Process & save all return files in queue directly to Cloud"
+                  >
+                    <span>☁️</span>
+                    <span>
+                      {isSavingAllCloud
+                        ? "Saving to Cloud…"
+                        : isProcessingReturns
+                        ? "Processing…"
+                        : `Save All Cloud (${completedReturns.length > 0 ? completedReturns.length : returnFiles.length})`}
+                    </span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => {
                       setReturnFiles([]);
                       setSelectedReturnIds(new Set());
                     }}
-                    className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 cursor-pointer transition-colors"
+                    disabled={isSavingAllCloud || isProcessingReturns}
+                    className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 disabled:opacity-60 cursor-pointer transition-colors"
                   >
                     Clear All
                   </button>
@@ -1669,75 +1773,128 @@ export default function NlbReturnsPage() {
                     </span>
                   </label>
 
-                  {selectedReturnIds.size > 0 && (
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleSaveBatchToLocal(
-                            returnFiles.filter((f) =>
-                              selectedReturnIds.has(f.id)
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {selectedReturnIds.size > 0 ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSaveBatchToLocal(
+                              returnFiles.filter((f) =>
+                                selectedReturnIds.has(f.id)
+                              )
                             )
-                          )
-                        }
-                        disabled={isSavingLocalBatch}
-                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer flex items-center gap-1.5"
-                        title="Save files directly into C:\nlb return"
-                      >
-                        <span>💾</span>
-                        <span>
-                          {isSavingLocalBatch
+                          }
+                          disabled={isSavingLocalBatch}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer flex items-center gap-1.5"
+                          title="Save files directly into C:\nlb return"
+                        >
+                          <span>💾</span>
+                          <span>
+                            {isSavingLocalBatch
+                              ? "Saving…"
+                              : `Save Local (${selectedReturnIds.size})`}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDownloadBatch(
+                              returnFiles.filter((f) =>
+                                selectedReturnIds.has(f.id)
+                              )
+                            )
+                          }
+                          disabled={isDownloadingSelected}
+                          className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer"
+                        >
+                          Download ({selectedReturnIds.size})
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSaveBatchToFirebase(
+                              returnFiles.filter((f) =>
+                                selectedReturnIds.has(f.id)
+                              )
+                            )
+                          }
+                          disabled={isSavingFirebase || isSavingAllCloud}
+                          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer"
+                        >
+                          {isSavingFirebase
                             ? "Saving…"
-                            : `Save Local (${selectedReturnIds.size})`}
-                        </span>
-                      </button>
+                            : `Save to Cloud (${selectedReturnIds.size})`}
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleDownloadBatch(
-                            returnFiles.filter((f) =>
-                              selectedReturnIds.has(f.id)
-                            )
-                          )
-                        }
-                        disabled={isDownloadingSelected}
-                        className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer"
-                      >
-                        Download ({selectedReturnIds.size})
-                      </button>
+                        {selectedReturnIds.size < completedReturns.length && (
+                          <button
+                            type="button"
+                            onClick={handleSaveAllCloud}
+                            disabled={isSavingFirebase || isSavingAllCloud}
+                            className="px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-semibold shadow-2xs disabled:opacity-60 cursor-pointer flex items-center gap-1"
+                            title="Save all completed return files to Cloud Storage & Firestore"
+                          >
+                            <span>☁️</span>
+                            <span>
+                              {isSavingAllCloud
+                                ? "Saving All…"
+                                : `Save All Cloud (${completedReturns.length})`}
+                            </span>
+                          </button>
+                        )}
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleSaveBatchToFirebase(
-                            returnFiles.filter((f) =>
-                              selectedReturnIds.has(f.id)
-                            )
-                          )
-                        }
-                        disabled={isSavingFirebase}
-                        className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer"
-                      >
-                        {isSavingFirebase
-                          ? "Saving…"
-                          : `Save to Cloud (${selectedReturnIds.size})`}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReturnFiles((prev) =>
+                              prev.filter((f) => !selectedReturnIds.has(f.id))
+                            );
+                            setSelectedReturnIds(new Set());
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg border border-rose-200 text-rose-600 text-xs bg-white hover:bg-rose-50 font-medium cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSaveBatchToLocal(completedReturns)
+                          }
+                          disabled={isSavingLocalBatch}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer flex items-center gap-1.5"
+                          title="Save all completed files directly into C:\nlb return"
+                        >
+                          <span>💾</span>
+                          <span>
+                            {isSavingLocalBatch
+                              ? "Saving…"
+                              : `Save All Local (${completedReturns.length})`}
+                          </span>
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setReturnFiles((prev) =>
-                            prev.filter((f) => !selectedReturnIds.has(f.id))
-                          );
-                          setSelectedReturnIds(new Set());
-                        }}
-                        className="px-2.5 py-1.5 rounded-lg border border-rose-200 text-rose-600 text-xs bg-white hover:bg-rose-50 font-medium cursor-pointer"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  )}
+                        <button
+                          type="button"
+                          onClick={handleSaveAllCloud}
+                          disabled={isSavingFirebase || isSavingAllCloud}
+                          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer flex items-center gap-1.5"
+                          title="Save all completed return files to Cloud Storage & Firestore"
+                        >
+                          <span>☁️</span>
+                          <span>
+                            {isSavingAllCloud
+                              ? "Saving to Cloud…"
+                              : `Save All Cloud (${completedReturns.length})`}
+                          </span>
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1774,7 +1931,11 @@ export default function NlbReturnsPage() {
                       handleOpenPopupView(entry, idx, returnFiles)
                     }
                     isSavingLocal={savingLocalFileId === entry.id}
-                    isSavingFirebase={savingFileId === entry.id}
+                    isSavingFirebase={
+                      savingFileId === entry.id ||
+                      isSavingFirebase ||
+                      isSavingAllCloud
+                    }
                     isProcessingAll={isProcessingReturns}
                   />
                 ))}
