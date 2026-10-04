@@ -24,6 +24,12 @@ import {
 } from "../lib/nlbReturnUploadService";
 import type { NlbReturnFileRecord } from "../lib/nlbReturnUploadService";
 import { validateFileData } from "../lib/fileValidation";
+import NlbPcProfileSelector from "../components/NlbPcProfileSelector";
+import {
+  getCachedPcProfiles,
+  getLocalActivePcId,
+  setLocalActivePcId,
+} from "../lib/nlbPcProfileConfig";
 
 /* =====================================================
    TYPES
@@ -113,23 +119,54 @@ async function triggerDownload(blob: Blob, filename: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Prompts user to select a destination directory via native browser file browser.
+ * Must be called directly in user click handler to maintain transient user activation.
+ */
+async function promptDirectoryPicker(pickerId: string = "nlb-returns-location"): Promise<any | null> {
+  if (typeof window === "undefined" || !("showDirectoryPicker" in window)) {
+    return null;
+  }
+  try {
+    return await (window as any).showDirectoryPicker({
+      id: pickerId,
+      mode: "readwrite",
+    });
+  } catch (err: any) {
+    if (err.name === "AbortError") {
+      return "CANCELLED";
+    }
+    console.warn("showDirectoryPicker failed:", err);
+    return null;
+  }
+}
+
 async function saveFilesToDirectory(
-  filesToSave: { name: string; blob: Blob }[]
+  filesToSave: { name: string; blob: Blob }[],
+  existingDirHandle?: any
 ): Promise<{ success: boolean; savedCount: number; message?: string }> {
   if (filesToSave.length === 0) return { success: false, savedCount: 0 };
 
-  if (filesToSave.length === 1) {
-    const ok = await triggerDownload(filesToSave[0].blob, filesToSave[0].name);
-    return {
-      success: ok,
-      savedCount: ok ? 1 : 0,
-      message: ok ? `Saved ${filesToSave[0].name}` : "Download cancelled.",
-    };
+  let dirHandle = existingDirHandle;
+  if (!dirHandle && typeof window !== "undefined" && "showDirectoryPicker" in window) {
+    try {
+      dirHandle = await (window as any).showDirectoryPicker({
+        id: "nlb-returns-location",
+        mode: "readwrite",
+      });
+    } catch (err: any) {
+      if (err.name === "AbortError") {
+        return {
+          success: false,
+          savedCount: 0,
+          message: "Folder selection cancelled.",
+        };
+      }
+    }
   }
 
-  if (typeof window !== "undefined" && "showDirectoryPicker" in window) {
+  if (dirHandle && dirHandle !== "CANCELLED") {
     try {
-      const dirHandle = await (window as any).showDirectoryPicker();
       let count = 0;
       for (const item of filesToSave) {
         const fileHandle = await dirHandle.getFileHandle(item.name, {
@@ -143,16 +180,10 @@ async function saveFilesToDirectory(
       return {
         success: true,
         savedCount: count,
-        message: `Successfully saved ${count} file(s) into selected folder.`,
+        message: `Successfully saved ${count} file(s) into "${dirHandle.name || "selected folder"}".`,
       };
     } catch (err: any) {
-      if (err.name === "AbortError") {
-        return {
-          success: false,
-          savedCount: 0,
-          message: "Folder selection cancelled.",
-        };
-      }
+      console.warn("Writing to directory handle failed, falling back to browser download:", err);
     }
   }
 
@@ -246,6 +277,33 @@ export default function NlbReturnsPage() {
     }, 4500);
     return () => clearTimeout(timer);
   }, [feedbackMessage]);
+
+  // PC Profile quick-select state
+  const [activeReturnPcId, setActiveReturnPcId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const savedPcId = getLocalActivePcId();
+    if (savedPcId) {
+      setActiveReturnPcId(savedPcId);
+    }
+  }, []);
+
+  // Auto-sync saved return file selections when saved files load or active PC changes
+  useEffect(() => {
+    if (!activeReturnPcId) return;
+    const profiles = getCachedPcProfiles();
+    const active = profiles.find((p) => p.id === activeReturnPcId);
+    if (!active || active.codes.length === 0) {
+      return;
+    }
+    const codesUpper = new Set(active.codes.map((c) => c.toUpperCase()));
+    const matchingIds = new Set(
+      savedReturnFiles
+        .filter((f) => codesUpper.has(f.code.toUpperCase()))
+        .map((f) => f.id)
+    );
+    setSelectedSavedReturnIds(matchingIds);
+  }, [savedReturnFiles, activeReturnPcId]);
 
   function notifySaveSuccess(
     message: string,
@@ -903,6 +961,63 @@ export default function NlbReturnsPage() {
     }
   }
 
+  async function handleDownloadAllSelectedReturns() {
+    const recordsToDownload = savedReturnFiles.filter((f) =>
+      selectedSavedReturnIds.has(f.id)
+    );
+    const batchToDownload = returnFiles.filter((f) =>
+      selectedReturnIds.has(f.id)
+    );
+
+    if (recordsToDownload.length === 0 && batchToDownload.length === 0) return;
+
+    let dirHandle: any = sessionDirHandle;
+    if (!dirHandle) {
+      dirHandle = await promptDirectoryPicker("nlb-returns-location");
+      if (dirHandle === "CANCELLED") {
+        setFeedbackMessage({
+          type: "info",
+          text: "Download cancelled — no folder selected.",
+        });
+        return;
+      }
+    }
+
+    setIsDownloadingSelected(true);
+    try {
+      const filesToSave: { name: string; blob: Blob }[] = [];
+
+      for (const rec of recordsToDownload) {
+        try {
+          const blob = await fetchFileBlobFromUrl(rec.downloadUrl);
+          filesToSave.push({ name: rec.fileName, blob });
+        } catch (err) {
+          console.warn("Failed fetching return file blob:", err);
+        }
+      }
+
+      for (const entry of batchToDownload) {
+        const blob = getEntryBlob(entry);
+        if (blob) {
+          filesToSave.push({ name: getCleanFileName(entry), blob });
+        }
+      }
+
+      const res = await saveFilesToDirectory(filesToSave, dirHandle);
+      if (res.message) {
+        setFeedbackMessage({
+          type: res.success ? "success" : "error",
+          text: res.message,
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error downloading return files.";
+      setFeedbackMessage({ type: "error", text: msg });
+    } finally {
+      setIsDownloadingSelected(false);
+    }
+  }
+
   /* ---- Firebase Save Handlers ---- */
   async function handleSaveSingleToFirebase(entry: ReturnFileEntry) {
     const blob = getEntryBlob(entry);
@@ -1180,8 +1295,15 @@ export default function NlbReturnsPage() {
   const completedReturns = returnFiles.filter((f) => f.status === "completed");
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-slate-100/80 text-slate-900 py-8 px-4 font-sans">
-      <div className="w-full max-w-6xl p-6 md:p-8 rounded-2xl bg-white shadow-sm border border-slate-200 space-y-6">
+    <main
+      className="min-h-screen flex items-center justify-center text-slate-900 py-8 px-4 font-sans bg-cover bg-center bg-no-repeat bg-fixed relative"
+      style={{
+        backgroundImage: `url('/robot-bg.jpg')`,
+      }}
+    >
+      <div className="absolute inset-0 bg-white/40 backdrop-blur-[2px] pointer-events-none" />
+
+      <div className="relative z-10 w-full max-w-6xl p-6 md:p-8 rounded-2xl bg-white/95 backdrop-blur-md shadow-2xl border border-white/60 space-y-6">
         {/* =====================================================
             TOP NAVIGATION & HEADER
             ===================================================== */}
@@ -1662,6 +1784,45 @@ export default function NlbReturnsPage() {
 
           {/* ---------------- Saved Return Files Table ---------------- */}
           <div className="mt-6 pt-6 border-t border-slate-200 space-y-3">
+            {/* PC Profile Quick Select for Returns */}
+            <div className="bg-slate-50/90 border border-slate-200 rounded-lg px-3 py-2">
+              <NlbPcProfileSelector
+                availableCodes={[...ALLOWED_RETURN_CODES]}
+                activePcId={activeReturnPcId}
+                colorTheme="teal"
+                selectedCount={selectedSavedReturnIds.size + selectedReturnIds.size}
+                isDownloading={isDownloadingSelected}
+                onDownload={handleDownloadAllSelectedReturns}
+                onSelectProfile={(codes, profileId) => {
+                  setActiveReturnPcId(profileId);
+                  setLocalActivePcId(profileId);
+                  if (!profileId || codes.length === 0) {
+                    setSelectedSavedReturnIds(new Set());
+                    setSelectedReturnIds(new Set());
+                    return;
+                  }
+                  const codesUpper = new Set(codes.map((c) => c.toUpperCase()));
+                  // Auto-select matching saved return files
+                  const matchingSaved = new Set(
+                    savedReturnFiles
+                      .filter((f) => codesUpper.has(f.code.toUpperCase()))
+                      .map((f) => f.id)
+                  );
+                  setSelectedSavedReturnIds(matchingSaved);
+
+                  // Also auto-select matching current batch return files if any
+                  const matchingBatch = new Set(
+                    returnFiles
+                      .filter((f) => codesUpper.has(f.code.toUpperCase()))
+                      .map((f) => f.id)
+                  );
+                  if (matchingBatch.size > 0) {
+                    setSelectedReturnIds(matchingBatch);
+                  }
+                }}
+              />
+            </div>
+
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-slate-700"></span>

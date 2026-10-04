@@ -32,6 +32,12 @@ import { getNlbAgentAliases } from "../lib/nlbAgentConfig";
 import { validateFileData } from "../lib/fileValidation";
 import NlbLotteryManagerModal from "../components/NlbLotteryManagerModal";
 import { loadNlbLotteries, getActiveNlbCodes } from "../lib/nlbLotteryConfig";
+import NlbPcProfileSelector from "../components/NlbPcProfileSelector";
+import {
+  getCachedPcProfiles,
+  getLocalActivePcId,
+  setLocalActivePcId,
+} from "../lib/nlbPcProfileConfig";
 
 /* =====================================================
    TYPES
@@ -230,23 +236,50 @@ async function triggerDownload(blob: Blob, filename: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Prompts user to select a destination directory via native browser file browser.
+ * Must be called directly in user click handler to maintain transient user activation.
+ */
+async function promptDirectoryPicker(pickerId: string = "nlb-files-location"): Promise<any | null> {
+  if (typeof window === "undefined" || !("showDirectoryPicker" in window)) {
+    return null;
+  }
+  try {
+    return await (window as any).showDirectoryPicker({
+      id: pickerId,
+      mode: "readwrite",
+    });
+  } catch (err: any) {
+    if (err.name === "AbortError") {
+      return "CANCELLED";
+    }
+    console.warn("showDirectoryPicker failed:", err);
+    return null;
+  }
+}
+
 async function saveFilesToDirectory(
-  filesToSave: { name: string; blob: Blob }[]
+  filesToSave: { name: string; blob: Blob }[],
+  existingDirHandle?: any
 ): Promise<{ success: boolean; savedCount: number; message?: string }> {
   if (filesToSave.length === 0) return { success: false, savedCount: 0 };
 
-  if (filesToSave.length === 1) {
-    const ok = await triggerDownload(filesToSave[0].blob, filesToSave[0].name);
-    return {
-      success: ok,
-      savedCount: ok ? 1 : 0,
-      message: ok ? `Saved ${filesToSave[0].name}` : "Download cancelled.",
-    };
+  let dirHandle = existingDirHandle;
+  if (!dirHandle && typeof window !== "undefined" && "showDirectoryPicker" in window) {
+    try {
+      dirHandle = await (window as any).showDirectoryPicker({
+        id: "nlb-files-location",
+        mode: "readwrite",
+      });
+    } catch (err: any) {
+      if (err.name === "AbortError") {
+        return { success: false, savedCount: 0, message: "Folder selection cancelled." };
+      }
+    }
   }
 
-  if (typeof window !== "undefined" && "showDirectoryPicker" in window) {
+  if (dirHandle && dirHandle !== "CANCELLED") {
     try {
-      const dirHandle = await (window as any).showDirectoryPicker();
       let count = 0;
       for (const item of filesToSave) {
         const fileHandle = await dirHandle.getFileHandle(item.name, { create: true });
@@ -258,12 +291,10 @@ async function saveFilesToDirectory(
       return {
         success: true,
         savedCount: count,
-        message: `Successfully saved ${count} file(s) into selected folder.`,
+        message: `Successfully saved ${count} file(s) into "${dirHandle.name || "selected folder"}".`,
       };
     } catch (err: any) {
-      if (err.name === "AbortError") {
-        return { success: false, savedCount: 0, message: "Folder selection cancelled." };
-      }
+      console.warn("Writing to directory handle failed, falling back to browser download:", err);
     }
   }
 
@@ -335,7 +366,7 @@ export default function NlbPreprocessPage() {
   const [isDownloadingSelected, setIsDownloadingSelected] = useState(false);
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<{
-    type: "success" | "error";
+    type: "success" | "error" | "info";
     text: string;
   } | null>(null);
 
@@ -346,11 +377,53 @@ export default function NlbPreprocessPage() {
   const [isNlbLotteryModalOpen, setIsNlbLotteryModalOpen] = useState(false);
   const [activeNlbCodes, setActiveNlbCodes] = useState<string[]>([...ALLOWED_CODES]);
 
+  // PC Profile quick-select state
+  const [activeSalesPcId, setActiveSalesPcId] = useState<string | null>(null);
+  const [activePurchasePcId, setActivePurchasePcId] = useState<string | null>(null);
+
   useEffect(() => {
     loadNlbLotteries().then((list) => {
       setActiveNlbCodes(getActiveNlbCodes(list));
     });
+    const savedPcId = getLocalActivePcId();
+    if (savedPcId) {
+      setActiveSalesPcId(savedPcId);
+    }
   }, []);
+
+  // Auto-sync saved sales file selections when saved files load or active PC changes
+  useEffect(() => {
+    if (!activeSalesPcId) return;
+    const profiles = getCachedPcProfiles();
+    const active = profiles.find((p) => p.id === activeSalesPcId);
+    if (!active || active.codes.length === 0) {
+      return;
+    }
+    const codesUpper = new Set(active.codes.map((c) => c.toUpperCase()));
+    const matchingIds = new Set(
+      savedSalesFiles
+        .filter((f) => codesUpper.has(f.code.toUpperCase()))
+        .map((f) => f.id)
+    );
+    setSelectedSavedSalesIds(matchingIds);
+  }, [savedSalesFiles, activeSalesPcId]);
+
+  // Auto-sync saved purchase file selections when saved files load or active PC changes
+  useEffect(() => {
+    if (!activePurchasePcId) return;
+    const profiles = getCachedPcProfiles();
+    const active = profiles.find((p) => p.id === activePurchasePcId);
+    if (!active || active.codes.length === 0) {
+      return;
+    }
+    const codesUpper = new Set(active.codes.map((c) => c.toUpperCase()));
+    const matchingIds = new Set(
+      savedPurchaseFiles
+        .filter((f) => codesUpper.has(f.code.toUpperCase()))
+        .map((f) => f.id)
+    );
+    setSelectedSavedPurchaseIds(matchingIds);
+  }, [savedPurchaseFiles, activePurchasePcId]);
 
   /* ---- Load saved files from Firebase for selectedDate ---- */
 
@@ -668,11 +741,23 @@ export default function NlbPreprocessPage() {
   async function handleDownloadSingle(entry: FileEntry) {
     const blob = getEntryBlob(entry);
     if (!blob) return;
-    await triggerDownload(blob, getCleanFileName(entry));
+    const dirHandle = await promptDirectoryPicker("nlb-single-location");
+    if (dirHandle === "CANCELLED") return;
+    await saveFilesToDirectory([{ name: getCleanFileName(entry), blob }], dirHandle);
   }
 
-  async function handleDownloadBatch(entries: FileEntry[]) {
+  async function handleDownloadBatch(entries: FileEntry[], existingDirHandle?: any) {
     if (entries.length === 0) return;
+
+    let dirHandle = existingDirHandle;
+    if (!dirHandle) {
+      dirHandle = await promptDirectoryPicker("nlb-batch-location");
+      if (dirHandle === "CANCELLED") {
+        setFeedbackMessage({ type: "info", text: "Download cancelled — no folder selected." });
+        return;
+      }
+    }
+
     setIsDownloadingSelected(true);
     try {
       const filesToSave = entries.map((e) => ({
@@ -680,7 +765,7 @@ export default function NlbPreprocessPage() {
         blob: getEntryBlob(e)!,
       }));
 
-      const res = await saveFilesToDirectory(filesToSave);
+      const res = await saveFilesToDirectory(filesToSave, dirHandle);
       if (res.message) {
         setFeedbackMessage({ type: res.success ? "success" : "error", text: res.message });
       }
@@ -1020,6 +1105,8 @@ export default function NlbPreprocessPage() {
   /* ---- Saved Firebase Actions ---- */
 
   async function handleDownloadSingleSaved(rec: NlbUploadedFileRecord) {
+    const dirHandle = await promptDirectoryPicker("nlb-single-location");
+    if (dirHandle === "CANCELLED") return;
     try {
       let blob = await fetchFileBlobFromUrl(rec.downloadUrl);
       if (rec.reportType !== "purchase_range") {
@@ -1029,16 +1116,25 @@ export default function NlbPreprocessPage() {
           blob = processed.blob;
         }
       }
-      await triggerDownload(blob, rec.fileName);
+      await saveFilesToDirectory([{ name: rec.fileName, blob }], dirHandle);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error downloading file.";
       setFeedbackMessage({ type: "error", text: msg });
     }
   }
 
-  async function handleDownloadSelectedSavedSales() {
+  async function handleDownloadSelectedSavedSales(existingDirHandle?: any) {
     const recordsToDownload = savedSalesFiles.filter((f) => selectedSavedSalesIds.has(f.id));
     if (recordsToDownload.length === 0) return;
+
+    let dirHandle = existingDirHandle;
+    if (!dirHandle) {
+      dirHandle = await promptDirectoryPicker("nlb-sales-location");
+      if (dirHandle === "CANCELLED") {
+        setFeedbackMessage({ type: "info", text: "Download cancelled — no folder selected." });
+        return;
+      }
+    }
 
     setIsDownloadingSelected(true);
     try {
@@ -1053,7 +1149,7 @@ export default function NlbPreprocessPage() {
         filesToSave.push({ name: rec.fileName, blob });
       }
 
-      const res = await saveFilesToDirectory(filesToSave);
+      const res = await saveFilesToDirectory(filesToSave, dirHandle);
       if (res.message) {
         setFeedbackMessage({ type: res.success ? "success" : "error", text: res.message });
       }
@@ -1065,9 +1161,18 @@ export default function NlbPreprocessPage() {
     }
   }
 
-  async function handleDownloadSelectedSavedPurchases() {
+  async function handleDownloadSelectedSavedPurchases(existingDirHandle?: any) {
     const recordsToDownload = savedPurchaseFiles.filter((f) => selectedSavedPurchaseIds.has(f.id));
     if (recordsToDownload.length === 0) return;
+
+    let dirHandle = existingDirHandle;
+    if (!dirHandle) {
+      dirHandle = await promptDirectoryPicker("nlb-purchase-location");
+      if (dirHandle === "CANCELLED") {
+        setFeedbackMessage({ type: "info", text: "Download cancelled — no folder selected." });
+        return;
+      }
+    }
 
     setIsDownloadingSelected(true);
     try {
@@ -1077,7 +1182,7 @@ export default function NlbPreprocessPage() {
         filesToSave.push({ name: rec.fileName, blob });
       }
 
-      const res = await saveFilesToDirectory(filesToSave);
+      const res = await saveFilesToDirectory(filesToSave, dirHandle);
       if (res.message) {
         setFeedbackMessage({ type: res.success ? "success" : "error", text: res.message });
       }
@@ -1197,8 +1302,16 @@ export default function NlbPreprocessPage() {
      ===================================================== */
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-900 py-8 px-4">
-      <div className="w-full max-w-6xl p-6 rounded-xl bg-white shadow-sm border border-gray-200 space-y-6">
+    <main
+      className="min-h-screen flex items-center justify-center text-gray-900 py-8 px-4 bg-cover bg-center bg-no-repeat bg-fixed relative"
+      style={{
+        backgroundImage: `url('/robot-bg.jpg')`,
+      }}
+    >
+      {/* Soft ambient overlay to ensure optimal contrast and readability */}
+      <div className="absolute inset-0 bg-white/40 backdrop-blur-[2px] pointer-events-none" />
+
+      <div className="relative z-10 w-full max-w-6xl p-6 rounded-2xl bg-white/95 backdrop-blur-md shadow-2xl border border-white/60 space-y-6">
         {/* ---------- Header ---------- */}
         <div className="flex items-center justify-between gap-4 flex-wrap pb-4 border-b border-gray-200">
           <div>
@@ -1228,6 +1341,8 @@ export default function NlbPreprocessPage() {
             className={`p-3 rounded-lg border flex items-center justify-between text-xs font-medium transition-all ${
               feedbackMessage.type === "success"
                 ? "bg-green-50 border-green-300 text-green-800"
+                : feedbackMessage.type === "info"
+                ? "bg-blue-50 border-blue-300 text-blue-800"
                 : "bg-red-50 border-red-300 text-red-800"
             }`}
           >
@@ -1539,6 +1654,67 @@ export default function NlbPreprocessPage() {
 
           {/* ---------------- Saved Sales Files ---------------- */}
           <div className="mt-4 pt-4 border-t border-teal-200/70 space-y-3">
+            {/* PC Profile Quick Select for Sales */}
+            <div className="bg-teal-50/60 border border-teal-200 rounded-lg px-3 py-2">
+                <NlbPcProfileSelector
+                  availableCodes={activeNlbCodes}
+                  activePcId={activeSalesPcId}
+                  colorTheme="teal"
+                  selectedCount={selectedSavedSalesIds.size + selectedSalesIds.size}
+                  isDownloading={isDownloadingSelected}
+                  onDownload={async () => {
+                    const dirHandle = await promptDirectoryPicker("nlb-sales-location");
+                    if (dirHandle === "CANCELLED") {
+                      setFeedbackMessage({ type: "info", text: "Download cancelled — no folder selected." });
+                      return;
+                    }
+                    if (selectedSavedSalesIds.size > 0) {
+                      await handleDownloadSelectedSavedSales(dirHandle);
+                    }
+                    if (selectedSalesIds.size > 0) {
+                      const toDownload = salesFiles.filter((f) => selectedSalesIds.has(f.id));
+                      if (toDownload.length > 0) {
+                        await handleDownloadBatch(toDownload, dirHandle);
+                      }
+                    }
+                  }}
+                  onSelectProfile={(codes) => {
+                    if (codes.length === 0) {
+                      // "All" — clear PC selection, deselect all
+                      setActiveSalesPcId(null);
+                      setLocalActivePcId(null);
+                      setSelectedSavedSalesIds(new Set());
+                      setSelectedSalesIds(new Set());
+                      return;
+                    }
+                    const profiles = getCachedPcProfiles();
+                    const matched = profiles.find(
+                      (p: any) => JSON.stringify(p.codes.sort()) === JSON.stringify([...codes].sort())
+                    );
+                    const pcId = matched?.id || null;
+                    setActiveSalesPcId(pcId);
+                    setLocalActivePcId(pcId);
+                    // Auto-select saved sales files matching these codes
+                    const codesUpper = new Set(codes.map((c: string) => c.toUpperCase()));
+                    const matchingIds = new Set(
+                      savedSalesFiles
+                        .filter((f) => codesUpper.has(f.code.toUpperCase()))
+                        .map((f) => f.id)
+                    );
+                    setSelectedSavedSalesIds(matchingIds);
+
+                    const matchingBatch = new Set(
+                      salesFiles
+                        .filter((f) => codesUpper.has(f.code.toUpperCase()))
+                        .map((f) => f.id)
+                    );
+                    if (matchingBatch.size > 0) {
+                      setSelectedSalesIds(matchingBatch);
+                    }
+                  }}
+                />
+              </div>
+
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-teal-600"></span>
@@ -1891,6 +2067,64 @@ export default function NlbPreprocessPage() {
 
           {/* ---------------- Saved Purchase Files ---------------- */}
           <div className="mt-4 pt-4 border-t border-indigo-200/70 space-y-3">
+            {/* PC Profile Quick Select for Purchases */}
+            <div className="bg-indigo-50/60 border border-indigo-200 rounded-lg px-3 py-2">
+              <NlbPcProfileSelector
+                availableCodes={activeNlbCodes}
+                activePcId={activePurchasePcId}
+                colorTheme="indigo"
+                selectedCount={selectedSavedPurchaseIds.size + selectedPurchaseIds.size}
+                isDownloading={isDownloadingSelected}
+                onDownload={async () => {
+                  const dirHandle = await promptDirectoryPicker("nlb-purchase-location");
+                  if (dirHandle === "CANCELLED") {
+                    setFeedbackMessage({ type: "info", text: "Download cancelled — no folder selected." });
+                    return;
+                  }
+                  if (selectedSavedPurchaseIds.size > 0) {
+                    await handleDownloadSelectedSavedPurchases(dirHandle);
+                  }
+                  if (selectedPurchaseIds.size > 0) {
+                    const toDownload = purchaseFiles.filter((f) => selectedPurchaseIds.has(f.id));
+                    if (toDownload.length > 0) {
+                      await handleDownloadBatch(toDownload, dirHandle);
+                    }
+                  }
+                }}
+                onSelectProfile={(codes) => {
+                  if (codes.length === 0) {
+                    setActivePurchasePcId(null);
+                    setSelectedSavedPurchaseIds(new Set());
+                    setSelectedPurchaseIds(new Set());
+                    return;
+                  }
+                  const profiles = getCachedPcProfiles();
+                  const matched = profiles.find(
+                    (p: any) => JSON.stringify(p.codes.sort()) === JSON.stringify([...codes].sort())
+                  );
+                  const pcId = matched?.id || null;
+                  setActivePurchasePcId(pcId);
+                  // Auto-select saved purchase files matching these codes
+                  const codesUpper = new Set(codes.map((c) => c.toUpperCase()));
+                  const matchingIds = new Set(
+                    savedPurchaseFiles
+                      .filter((f) => codesUpper.has(f.code.toUpperCase()))
+                      .map((f) => f.id)
+                  );
+                  setSelectedSavedPurchaseIds(matchingIds);
+
+                  const matchingBatch = new Set(
+                    purchaseFiles
+                      .filter((f) => codesUpper.has(f.code.toUpperCase()))
+                      .map((f) => f.id)
+                  );
+                  if (matchingBatch.size > 0) {
+                    setSelectedPurchaseIds(matchingBatch);
+                  }
+                }}
+              />
+            </div>
+
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
