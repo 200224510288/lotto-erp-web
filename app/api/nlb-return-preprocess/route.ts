@@ -9,6 +9,11 @@ import {
 import type { ReturnPreprocessResult } from "../../lib/nlbReturnPreprocess";
 import { getNlbAgentAliases } from "../../lib/nlbAgentConfig";
 import { validateFileData } from "../../lib/fileValidation";
+import {
+  loadNlbLotteries,
+  getActiveNlbCodes,
+  getNlbCodeAliases,
+} from "../../lib/nlbLotteryConfig";
 
 export async function POST(req: Request) {
   try {
@@ -22,8 +27,22 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1. Authoritative server-side filename validation
-    const validation = validateReturnFilename(file.name);
+    // 1. Authoritative server-side filename validation with dynamic lotteries
+    let dynamicCodes: string[] | undefined;
+    let dynamicAliases: Record<string, string> | undefined;
+    try {
+      const lotteries = await loadNlbLotteries();
+      dynamicCodes = getActiveNlbCodes(lotteries);
+      dynamicAliases = getNlbCodeAliases(lotteries);
+    } catch (err) {
+      console.warn("Could not load dynamic NLB lotteries for validation:", err);
+    }
+
+    const validation = validateReturnFilename(
+      file.name,
+      dynamicCodes,
+      dynamicAliases
+    );
     if (!validation.valid || !validation.code) {
       return Response.json(
         { error: validation.error } as Record<string, unknown>,

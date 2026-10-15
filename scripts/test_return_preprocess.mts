@@ -186,6 +186,20 @@ assert(testAoa[1][2] === "80063170103250", `Row 1 barcode is exact string (got $
 // Verify no scientific notation
 assert(!String(testAoa[1][2]).includes("E") && !String(testAoa[1][2]).includes("e"), `Barcode has no scientific notation`);
 
+console.log("\n=== 6. TEST DYNAMIC LOTTERY CODES AND ALIASES ===");
+
+const dynRes1 = validateReturnFilename("LGY.xlsx", ["LGY"]);
+assert(dynRes1.valid === true && dynRes1.code === "LGY", `Dynamic lottery LGY.xlsx accepted`);
+
+const dynRes2 = validateReturnFilename("LGY return.xls", ["LGY"]);
+assert(dynRes2.valid === true && dynRes2.code === "LGY", `Dynamic lottery "LGY return.xls" accepted`);
+
+const dynRes3 = validateReturnFilename("LGM_return.xlsx", ["LGY"], { LGM: "LGY" });
+assert(dynRes3.valid === true && dynRes3.code === "LGY", `Dynamic alias LGM_return.xlsx normalized to LGY`);
+
+const dynRes4 = validateReturnFilename("UNKNOWN_GAME.xlsx", ["LGY"]);
+assert(dynRes4.valid === false && Boolean(dynRes4.error?.includes("LGY")), `UNKNOWN_GAME rejected with dynamic error`);
+
 console.log(`\nResults: ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
 

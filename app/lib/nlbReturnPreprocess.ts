@@ -3,6 +3,11 @@
 
 import * as XLSX from "xlsx";
 import { applyNlbAgentMapping } from "./nlbPreprocess";
+import {
+  getCachedNlbLotteries,
+  getActiveNlbCodes,
+  getNlbCodeAliases,
+} from "./nlbLotteryConfig";
 
 /* =====================================================
    CONSTANTS & TYPES
@@ -19,13 +24,13 @@ export const ALLOWED_RETURN_CODES = [
   "SDE",
 ] as const;
 
-export type ReturnLotteryCode = (typeof ALLOWED_RETURN_CODES)[number];
+export type ReturnLotteryCode = (typeof ALLOWED_RETURN_CODES)[number] | string;
 
 export const INVALID_RETURN_FILENAME_ERROR =
   "Invalid return filename. Allowed return codes are: ADE, DNE, GSE, HAE, MPE, MSE, NJE, SDE.";
 
 // Shorthand aliases mapping to standard NLB codes
-const RETURN_CODE_ALIASES: Record<string, ReturnLotteryCode> = {
+export const DEFAULT_RETURN_CODE_ALIASES: Record<string, string> = {
   ADE: "ADE",
   DNE: "DNE",
   GSE: "GSE",
@@ -44,6 +49,9 @@ const RETURN_CODE_ALIASES: Record<string, ReturnLotteryCode> = {
   NJM: "NJE",
   SDM: "SDE",
 };
+
+export const RETURN_CODE_ALIASES: Record<string, ReturnLotteryCode> =
+  DEFAULT_RETURN_CODE_ALIASES;
 
 export type ReturnProcessedRow = {
   drawNumber: string;
@@ -72,16 +80,68 @@ export type Cell = string | number | boolean | null | undefined;
 /**
  * Validates return filename according to specification:
  * - Allowed codes: ADE, DNE, GSE, HAE, MPE, MSE, NJE, SDE (and legacy aliases MSM, MPM, etc.)
+ *   plus any dynamic NLB lotteries configured in Firestore / localStorage.
  * - Case-insensitive
  * - Supports filenames with "return", e.g.:
  *   "MSE.xls", "mse.xlsx", "MSE return.xls", "MSE_return.xls", "MSE RETURN.xls", "MSE_RETURN.xlsx"
- *   "ADE.xls", "ADE return.xlsx", "MSM return.xls"
- * - Normalizes to standard uppercase code (ADE, DNE, GSE, HAE, MPE, MSE, NJE, SDE)
+ *   "ADE.xls", "ADE return.xlsx", "MSM return.xls", "LGY return.xlsx"
+ * - Normalizes to standard uppercase code (ADE, DNE, GSE, HAE, MPE, MSE, NJE, SDE, LGY, etc.)
  * - Rejects unrelated filenames (test.xls, ABC.xls, MSE old.xls, MSE sales.xls)
  */
 export function validateReturnFilename(
-  filename: string
+  filename: string,
+  dynamicCodes?: string[],
+  dynamicAliases?: Record<string, string>
 ): { valid: boolean; code: string | null; rawCode?: string; error: string | null } {
+  // Determine active codes and aliases from dynamic inputs or cached lottery configuration
+  let configuredCodes: string[] = [];
+  let configuredAliases: Record<string, string> = {};
+
+  try {
+    const cached = getCachedNlbLotteries();
+    configuredCodes = getActiveNlbCodes(cached);
+    configuredAliases = getNlbCodeAliases(cached);
+  } catch {
+    // fallback to defaults if config unavailable
+  }
+
+  const activeCodesList =
+    dynamicCodes && dynamicCodes.length > 0
+      ? Array.from(
+          new Set([
+            ...dynamicCodes.map((c) => c.toUpperCase()),
+            ...ALLOWED_RETURN_CODES,
+          ])
+        )
+      : Array.from(
+          new Set([...configuredCodes, ...ALLOWED_RETURN_CODES])
+        );
+
+  const aliasMap: Record<string, string> = {
+    ...DEFAULT_RETURN_CODE_ALIASES,
+    ...configuredAliases,
+    ...(dynamicAliases || {}),
+  };
+
+  // Ensure every active code points to itself as canonical target
+  for (const c of activeCodesList) {
+    const uc = c.toUpperCase();
+    if (!aliasMap[uc]) {
+      aliasMap[uc] = uc;
+    }
+  }
+
+  // Exact default error message if active set matches original 8 codes
+  const isDefaultOnly =
+    activeCodesList.length === ALLOWED_RETURN_CODES.length &&
+    activeCodesList.every((c) =>
+      (ALLOWED_RETURN_CODES as readonly string[]).includes(c)
+    );
+
+  const defaultErrorMsg = isDefaultOnly
+    ? INVALID_RETURN_FILENAME_ERROR
+    : `Invalid return filename. Allowed return codes are: ${activeCodesList.join(", ")}.`;
+
   if (!filename || typeof filename !== "string") {
     return { valid: false, code: null, error: "No filename provided." };
   }
@@ -91,14 +151,21 @@ export function validateReturnFilename(
   // Check file extension (.xls or .xlsx)
   const extMatch = trimmed.match(/\.(xlsx?)$/i);
   if (!extMatch) {
-    return { valid: false, code: null, error: INVALID_RETURN_FILENAME_ERROR };
+    return { valid: false, code: null, error: defaultErrorMsg };
   }
 
   // Strip extension
   const base = trimmed.replace(/\.(xlsx?)$/i, "").trim();
 
-  // Regex for allowed codes (official 8 codes + legacy shorthands)
-  const codeGroup = "ADE|DNE|GSE|HAE|MPE|MSE|NJE|SDE|MSM|MPM|GSM|AM|HM|DNM|NJM|SDM";
+  // Regex pattern for all known codes and aliases sorted descending by length
+  const allPatterns = Array.from(
+    new Set([...Object.keys(aliasMap), ...activeCodesList])
+  )
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+
+  const codeGroup = allPatterns.join("|");
   const allowedPattern = new RegExp(
     `^(?:(${codeGroup})(?:[_\\s-]+(?:return|returns))?|(?:(?:return|returns)[_\\s-]+)(${codeGroup}))$`,
     "i"
@@ -106,17 +173,17 @@ export function validateReturnFilename(
 
   const match = base.match(allowedPattern);
   if (!match) {
-    return { valid: false, code: null, error: INVALID_RETURN_FILENAME_ERROR };
+    return { valid: false, code: null, error: defaultErrorMsg };
   }
 
   const rawCode = (match[1] || match[2]).toUpperCase();
-  const normalizedCode = RETURN_CODE_ALIASES[rawCode];
+  const normalizedCode = aliasMap[rawCode] || rawCode;
 
-  if (normalizedCode && (ALLOWED_RETURN_CODES as readonly string[]).includes(normalizedCode)) {
+  if (normalizedCode && activeCodesList.includes(normalizedCode)) {
     return { valid: true, code: normalizedCode, rawCode, error: null };
   }
 
-  return { valid: false, code: null, error: INVALID_RETURN_FILENAME_ERROR };
+  return { valid: false, code: null, error: defaultErrorMsg };
 }
 
 /* =====================================================

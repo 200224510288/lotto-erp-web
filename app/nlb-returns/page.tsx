@@ -30,6 +30,8 @@ import {
   getLocalActivePcId,
   setLocalActivePcId,
 } from "../lib/nlbPcProfileConfig";
+import NlbLotteryManagerModal from "../components/NlbLotteryManagerModal";
+import { loadNlbLotteries, getActiveNlbCodes } from "../lib/nlbLotteryConfig";
 
 /* =====================================================
    TYPES
@@ -282,7 +284,16 @@ export default function NlbReturnsPage() {
   // PC Profile quick-select state
   const [activeReturnPcId, setActiveReturnPcId] = useState<string | null>(null);
 
+  // NLB Dynamic Lotteries modal & active codes state
+  const [isNlbLotteryModalOpen, setIsNlbLotteryModalOpen] = useState(false);
+  const [activeNlbCodes, setActiveNlbCodes] = useState<string[]>([
+    ...ALLOWED_RETURN_CODES,
+  ]);
+
   useEffect(() => {
+    loadNlbLotteries().then((list) => {
+      setActiveNlbCodes(getActiveNlbCodes(list));
+    });
     const savedPcId = getLocalActivePcId();
     if (savedPcId) {
       setActiveReturnPcId(savedPcId);
@@ -593,7 +604,7 @@ export default function NlbReturnsPage() {
           continue;
         }
 
-        const val = validateReturnFilename(file.name);
+        const val = validateReturnFilename(file.name, activeNlbCodes);
         if (!val.valid || !val.code) {
           errors.push(
             val.error || `Invalid return filename: "${file.name}"`
@@ -635,7 +646,7 @@ export default function NlbReturnsPage() {
         setReturnFiles((prev) => [...prev, ...newEntries]);
       }
     },
-    [returnFiles]
+    [returnFiles, activeNlbCodes]
   );
 
   /* ---- Process Single Return File ---- */
@@ -1404,6 +1415,14 @@ export default function NlbReturnsPage() {
           <div className="flex flex-col items-end gap-2 shrink-0">
             {/* Primary Navigation Row */}
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsNlbLotteryModalOpen(true)}
+                className="px-3.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                title="Manage NLB lotteries, report codes, and aliases"
+              >
+                <span>⚙️ Manage NLB Lotteries</span>
+              </button>
               <Link
                 href="/nlb"
                 className="px-3.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition-colors flex items-center gap-1.5"
@@ -1627,6 +1646,18 @@ export default function NlbReturnsPage() {
                 Return Reports
               </h2>
             </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-mono text-slate-700 bg-slate-200/70 px-2 py-0.5 rounded">
+                {activeNlbCodes.join(", ")}
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsNlbLotteryModalOpen(true)}
+                className="text-[11px] text-teal-700 hover:text-teal-900 underline font-medium cursor-pointer"
+              >
+                Edit Lotteries
+              </button>
+            </div>
           </div>
 
           {/* Return Drop Zone */}
@@ -1661,7 +1692,7 @@ export default function NlbReturnsPage() {
               Drop Excel files here (.xlsx, .xls) or click to browse
             </p>
             <p className="text-[11px] text-slate-400 mt-1 font-mono">
-              Supported: {ALLOWED_RETURN_CODES.join(", ")}
+              Supported: {activeNlbCodes.join(", ")}
             </p>
             <input
               id="nlb-return-input"
@@ -1948,7 +1979,7 @@ export default function NlbReturnsPage() {
             {/* PC Profile Quick Select for Returns */}
             <div className="bg-slate-50/90 border border-slate-200 rounded-lg px-3 py-2">
               <NlbPcProfileSelector
-                availableCodes={[...ALLOWED_RETURN_CODES]}
+                availableCodes={activeNlbCodes}
                 activePcId={activeReturnPcId}
                 colorTheme="teal"
                 selectedCount={selectedSavedReturnIds.size + selectedReturnIds.size}
@@ -2188,6 +2219,13 @@ export default function NlbReturnsPage() {
           onClose={() => setPreviewModal(null)}
         />
       )}
+
+      {/* NLB Lottery Manager Modal */}
+      <NlbLotteryManagerModal
+        isOpen={isNlbLotteryModalOpen}
+        onClose={() => setIsNlbLotteryModalOpen(false)}
+        onLotteriesUpdated={(codes) => setActiveNlbCodes(codes)}
+      />
     </main>
   );
 }
