@@ -15,6 +15,7 @@ import {
 
 export const ALLOWED_RETURN_CODES = [
   "ADE",
+  "AYE",
   "DNE",
   "GSE",
   "HAE",
@@ -27,11 +28,12 @@ export const ALLOWED_RETURN_CODES = [
 export type ReturnLotteryCode = (typeof ALLOWED_RETURN_CODES)[number] | string;
 
 export const INVALID_RETURN_FILENAME_ERROR =
-  "Invalid return filename. Allowed return codes are: ADE, DNE, GSE, HAE, MPE, MSE, NJE, SDE.";
+  "Invalid return filename. Allowed return codes are: ADE, AYE, DNE, GSE, HAE, MPE, MSE, NJE, SDE.";
 
 // Shorthand aliases mapping to standard NLB codes
 export const DEFAULT_RETURN_CODE_ALIASES: Record<string, string> = {
   ADE: "ADE",
+  AYE: "AYE",
   DNE: "DNE",
   GSE: "GSE",
   HAE: "HAE",
@@ -39,6 +41,11 @@ export const DEFAULT_RETURN_CODE_ALIASES: Record<string, string> = {
   MSE: "MSE",
   NJE: "NJE",
   SDE: "SDE",
+  // Ayubo / Ayubowan new lottery aliases:
+  AYUBO: "AYE",
+  AYUBOWAN: "AYE",
+  AYM: "AYE",
+  AYU: "AYE",
   // Legacy shorthand codes:
   MSM: "MSE",
   MPM: "MPE",
@@ -311,57 +318,89 @@ function isEmptyRow(row: Cell[]): boolean {
  * Extracts only pure numeric digits e.g. "6317".
  */
 export function extractReturnDrawNumber(data: Cell[][]): string | null {
-  const headerRows = data.slice(0, 15);
+  const headerRows = data.slice(0, 35);
 
-  // 1. Explicit pattern: DRAW NO 6317, DRAW NUMBER 6317, DRAW NO: 6317, D/N 6317
+  // 1. Explicit pattern in any individual cell (e.g. "DRAW : 4", "DRAW NO 6317", "DRAW NO: 4", "D/N: 4")
   for (const row of headerRows) {
     for (const cell of row) {
       if (typeof cell === "string") {
-        const match = cell.match(/(?:DRAW\s*(?:NO\.?|NUMBER|#)?|D\/N)\s*[:.-]?\s*(\d{1,6})/i);
+        const match = cell.match(/(?:^|\b)(?:DRAW\s*(?:NO\.?|NUMBER|#)?|D\/N)(?!\s*DATE)\s*[:.-]?\s*(\d{1,6})\b/i);
         if (match) return match[1];
       }
     }
   }
 
-  // 2. Title row with Draw Number e.g. "MSM RETURN REPORT - 6317" or "6317 MSM RETURN"
+  // 2. Multi-cell row layout: where "DRAW" label and the number are in separate cells
+  // e.g. ["DRAW", null, null, ":", null, "4"], ["DRAW", ":", 4], ["DRAW :", 4], ["DRAW", 4]
   for (const row of headerRows) {
-    for (const cell of row) {
-      if (typeof cell === "string") {
-        const matchPrefix = cell.match(/^\s*(\d{3,6})\s*[-–—\s]+[A-Za-z]/i);
-        if (matchPrefix) return matchPrefix[1];
+    const drawCellIdx = row.findIndex(
+      (c) =>
+        typeof c === "string" &&
+        /(?:^|\b)(?:DRAW\s*(?:NO\.?|NUMBER|#)?|D\/N)\b/i.test(c.trim()) &&
+        !/\bDRAW\s+DATE\b/i.test(c.trim())
+    );
 
-        const matchSuffix = cell.match(/(?:RETURN|RETURNS|REPORT)\s*[-–—:\s]+(\d{3,6})/i);
-        if (matchSuffix) return matchSuffix[1];
+    if (drawCellIdx !== -1) {
+      // Look at cells immediately following the DRAW label cell
+      for (let j = drawCellIdx + 1; j < row.length; j++) {
+        const s = cellToString(row[j]).trim();
+        if (!s || s === ":" || s === "-" || s === "–" || s === "." || s === "#") continue;
+        const numMatch = s.match(/^\s*[:.-]?\s*(\d{1,6})\b/);
+        if (numMatch) return numMatch[1];
       }
+
+      // Also try joined row text as a backup
+      const rowJoined = row
+        .map((c) => cellToString(c).trim())
+        .filter(Boolean)
+        .join(" ");
+      const joinedMatch = rowJoined.match(
+        /(?:^|\b)(?:DRAW\s*(?:NO\.?|NUMBER|#)?|D\/N)(?!\s*DATE)\s*[:.-]?\s*(\d{1,6})\b/i
+      );
+      if (joinedMatch) return joinedMatch[1];
     }
   }
 
-  // 3. Any cell containing DRAW and another cell in the same row having 3-6 digits
+  // 3. Title row with Draw Number e.g. "MSM RETURN REPORT - 6317" or "AYUBO RETURN REPORT - 4"
+  for (const row of headerRows) {
+    for (const cell of row) {
+      const s = cellToString(cell).trim();
+      if (!s) continue;
+
+      const matchPrefix = s.match(/^\s*(\d{1,6})\s*[-–—\s]+[A-Za-z].*(?:RETURN|RETURNS|REPORT|SALES|SUMMARY)/i);
+      if (matchPrefix) return matchPrefix[1];
+
+      const matchSuffix = s.match(/(?:RETURN|RETURNS|REPORT|SALES|SUMMARY)\s*[-–—:\s]+(\d{1,6})\b/i);
+      if (matchSuffix) return matchSuffix[1];
+    }
+  }
+
+  // 4. Any cell containing DRAW (not DRAW DATE) and another cell in the same row having 1-6 digits
   for (const row of headerRows) {
     const hasDraw = row.some(
-      (c) => typeof c === "string" && /DRAW/i.test(c)
+      (c) =>
+        typeof c === "string" &&
+        /\bDRAW\b/i.test(c) &&
+        !/\bDRAW\s+DATE\b/i.test(c)
     );
     if (hasDraw) {
       for (const cell of row) {
         const s = cellToString(cell).trim();
-        if (/^\d{3,6}$/.test(s)) {
+        if (/^\d{1,6}$/.test(s)) {
           return s;
         }
       }
     }
   }
 
-  // 4. Barcode fallback: 14-digit standard barcode characters 3..7 (e.g. 8006317... -> 6317)
-  for (const row of data.slice(2, 25)) {
+  // 5. Barcode fallback: 12-16 digit standard barcode characters 3..7 (e.g. 8006317... -> 6317, 8000004... -> 4)
+  for (const row of data.slice(2, 35)) {
     for (const cell of row) {
       const digits = cellToDigits(cell);
-      if (digits.length >= 13 && digits.length <= 15) {
-        // NLB standard format: usually starts with 800 + 4-digit draw number e.g. 800631701...
-        if (digits.startsWith("800") && digits.length >= 7) {
-          const cand = digits.slice(3, 7).replace(/^0+/, "");
-          if (cand.length >= 3 && cand.length <= 5) {
-            return cand;
-          }
+      if (digits.length >= 12 && digits.length <= 16) {
+        const cand = digits.slice(3, 7).replace(/^0+/, "");
+        if (cand.length >= 1 && cand.length <= 5) {
+          return cand;
         }
       }
     }
@@ -474,15 +513,15 @@ function detectAgentCodeInReturnRow(row: Cell[], drawNumber: string | null): str
 }
 
 /**
- * Detect barcode-like values (10+ digits) in a row.
+ * Detect barcode-like values in a row.
  * Returns exact strings without conversion to float.
+ * Supports standard NLB 13-15 digit barcodes as well as 7-10 digit ticket serials.
  */
 function detectBarcodesInReturnRow(row: Cell[]): string[] {
   const barcodes: string[] = [];
   for (const cell of row) {
     const digits = cellToDigits(cell);
-    // Standard NLB return barcodes are usually 13-15 digits (e.g. 80063170103250)
-    if (digits.length >= 10) {
+    if (digits.length >= 7) {
       barcodes.push(digits);
     }
   }

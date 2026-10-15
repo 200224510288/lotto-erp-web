@@ -7,7 +7,7 @@
    ===================================================== */
 
 export const ALLOWED_CODES = [
-  "MSE", "MPE", "GSE", "ADE", "HAE", "DNE", "NJE", "SDE",
+  "MSE", "MPE", "GSE", "ADE", "HAE", "DNE", "NJE", "SDE", "AYE",
 ] as const;
 
 export type LotteryCode = (typeof ALLOWED_CODES)[number];
@@ -191,15 +191,43 @@ function isEmptyRow(row: Cell[]): boolean {
    ===================================================== */
 
 export function extractDrawNumber(data: Cell[][]): string | null {
-  const headerRows = data.slice(0, 15);
+  const headerRows = data.slice(0, 35);
 
   // 1. Explicit DRAW NO / DRAW / D/N pattern anywhere in cell
   for (const row of headerRows) {
     for (const cell of row) {
       if (typeof cell === "string") {
-        const match = cell.match(/(?:DRAW\s*(?:NO\.?|NUMBER|#)?|D\/N)\s*[:.-]?\s*(\d+)/i);
+        const match = cell.match(/(?:^|\b)(?:DRAW\s*(?:NO\.?|NUMBER|#)?|D\/N)(?!\s*DATE)\s*[:.-]?\s*(\d+)\b/i);
         if (match) return match[1];
       }
+    }
+  }
+
+  // 1b. Multi-cell row layout: where DRAW label and number are in separate cells
+  for (const row of headerRows) {
+    const drawCellIdx = row.findIndex(
+      (c) =>
+        typeof c === "string" &&
+        /(?:^|\b)(?:DRAW\s*(?:NO\.?|NUMBER|#)?|D\/N)\b/i.test(c.trim()) &&
+        !/\bDRAW\s+DATE\b/i.test(c.trim())
+    );
+
+    if (drawCellIdx !== -1) {
+      for (let j = drawCellIdx + 1; j < row.length; j++) {
+        const s = cellToString(row[j]).trim();
+        if (!s || s === ":" || s === "-" || s === "–" || s === "." || s === "#") continue;
+        const numMatch = s.match(/^\s*[:.-]?\s*(\d{1,6})\b/);
+        if (numMatch) return numMatch[1];
+      }
+
+      const rowJoined = row
+        .map((c) => cellToString(c).trim())
+        .filter(Boolean)
+        .join(" ");
+      const joinedMatch = rowJoined.match(
+        /(?:^|\b)(?:DRAW\s*(?:NO\.?|NUMBER|#)?|D\/N)(?!\s*DATE)\s*[:.-]?\s*(\d{1,6})\b/i
+      );
+      if (joinedMatch) return joinedMatch[1];
     }
   }
 

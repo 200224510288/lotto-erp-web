@@ -62,6 +62,12 @@ export const DEFAULT_NLB_LOTTERIES: NlbLotteryEntry[] = [
     aliases: ["SDM"],
     isActive: true,
   },
+  {
+    code: "AYE",
+    name: "Ayubo (ආයුබෝ) / Ayubowan",
+    aliases: ["AYUBO", "AYUBOWAN", "AYM", "AYU"],
+    isActive: true,
+  },
 ];
 
 const FIRESTORE_COLLECTION = "nlb_game_config";
