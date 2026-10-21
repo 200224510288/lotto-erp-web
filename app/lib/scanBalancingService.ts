@@ -30,6 +30,7 @@ export interface StaffEntry {
   staffName: string;
 
   agentParcels: number[];
+  returnedParcels?: number[];
   additionalBalanceOnly: number[];
   additionalTodayWins: number[];
 
@@ -39,6 +40,7 @@ export interface StaffEntry {
   actualClosingBalance: number;
 
   agentDraft?: string;
+  reductionDraft?: string;
   additionalBalanceDraft?: string;
   additionalTodayDraft?: string;
 }
@@ -47,6 +49,7 @@ export interface StaffEntryPayload {
   id: string;
   staffName: string;
   agentParcels: number[];
+  returnedParcels?: number[];
   additionalBalanceOnly: number[];
   additionalTodayWins: number[];
   previousBalance: number;
@@ -65,6 +68,8 @@ export interface DailyScanClaim {
 
 export interface StaffCalculatedTotals {
   agentSum: number;
+  reductionSum: number;
+  netAgentSum: number;
   extraSum: number;
   todaySum: number;
   winsForBalance: number;
@@ -72,6 +77,9 @@ export interface StaffCalculatedTotals {
   actual: number;
   diff: number;
   assignedScanned: number;
+  agentCount: number;
+  reductionCount: number;
+  netAgentCount: number;
 }
 
 export interface DailyScanSummaryTotals {
@@ -80,6 +88,10 @@ export interface DailyScanSummaryTotals {
   difference: number;
   isBalanced: boolean;
   totalAgentParcelsSum: number;
+  totalReductionSum: number;
+  totalNetAgentParcelsSum: number;
+  totalAgentParcelsCount: number;
+  totalReductionCount: number;
   totalExtraSum: number;
   totalTodayWinsSum: number;
 }
@@ -94,16 +106,31 @@ export function roundToTwoDecimals(val: number): number {
 
 /**
  * Calculate individual staff member's scan balancing metrics:
- * - winsForBalance = agentSum + extraSum + todaySum
+ * - agentSum = gross sum of assigned agent parcels
+ * - reductionSum = sum of returned unscanned parcels
+ * - netAgentSum = agentSum - reductionSum
+ * - winsForBalance = netAgentSum + extraSum + todaySum
  * - predicted = previousBalance + winsForBalance - mailAmount - returnClaims
  * - actual = actualClosingBalance
  * - diff = actual - predicted
  * - assignedScanned = mailAmount + actualClosingBalance - previousBalance - returnClaims - extraSum - todaySum
  */
 export function calculateStaffTotals(staff: StaffEntry): StaffCalculatedTotals {
-  const agentSum = roundToTwoDecimals(
-    (staff.agentParcels || []).reduce((s, v) => s + (typeof v === "number" ? v : 0), 0)
+  const agentParcelsList = (staff.agentParcels || []).filter(
+    (v) => typeof v === "number" && !isNaN(v) && v > 0
   );
+  const returnedParcelsList = (staff.returnedParcels || []).filter(
+    (v) => typeof v === "number" && !isNaN(v) && v > 0
+  );
+
+  const agentSum = roundToTwoDecimals(agentParcelsList.reduce((s, v) => s + v, 0));
+  const reductionSum = roundToTwoDecimals(returnedParcelsList.reduce((s, v) => s + v, 0));
+  const netAgentSum = roundToTwoDecimals(Math.max(0, agentSum - reductionSum));
+
+  const agentCount = agentParcelsList.length;
+  const reductionCount = returnedParcelsList.length;
+  const netAgentCount = Math.max(0, agentCount - reductionCount);
+
   const extraSum = roundToTwoDecimals(
     (staff.additionalBalanceOnly || []).reduce((s, v) => s + (typeof v === "number" ? v : 0), 0)
   );
@@ -111,7 +138,7 @@ export function calculateStaffTotals(staff: StaffEntry): StaffCalculatedTotals {
     (staff.additionalTodayWins || []).reduce((s, v) => s + (typeof v === "number" ? v : 0), 0)
   );
 
-  const winsForBalance = roundToTwoDecimals(agentSum + extraSum + todaySum);
+  const winsForBalance = roundToTwoDecimals(netAgentSum + extraSum + todaySum);
 
   const previousBalance = staff.previousBalance || 0;
   const mailAmount = staff.mailAmount || 0;
@@ -130,6 +157,8 @@ export function calculateStaffTotals(staff: StaffEntry): StaffCalculatedTotals {
 
   return {
     agentSum,
+    reductionSum,
+    netAgentSum,
     extraSum,
     todaySum,
     winsForBalance,
@@ -137,6 +166,9 @@ export function calculateStaffTotals(staff: StaffEntry): StaffCalculatedTotals {
     actual,
     diff,
     assignedScanned,
+    agentCount,
+    reductionCount,
+    netAgentCount,
   };
 }
 
@@ -152,6 +184,10 @@ export function calculateDailyScanSummary(
 ): DailyScanSummaryTotals {
   let totalAssignedScanned = 0;
   let totalAgentParcelsSum = 0;
+  let totalReductionSum = 0;
+  let totalNetAgentParcelsSum = 0;
+  let totalAgentParcelsCount = 0;
+  let totalReductionCount = 0;
   let totalExtraSum = 0;
   let totalTodayWinsSum = 0;
 
@@ -159,12 +195,18 @@ export function calculateDailyScanSummary(
     const t = calculateStaffTotals(staff);
     totalAssignedScanned += t.assignedScanned;
     totalAgentParcelsSum += t.agentSum;
+    totalReductionSum += t.reductionSum;
+    totalNetAgentParcelsSum += t.netAgentSum;
+    totalAgentParcelsCount += t.agentCount;
+    totalReductionCount += t.reductionCount;
     totalExtraSum += t.extraSum;
     totalTodayWinsSum += t.todaySum;
   }
 
   totalAssignedScanned = roundToTwoDecimals(totalAssignedScanned);
   totalAgentParcelsSum = roundToTwoDecimals(totalAgentParcelsSum);
+  totalReductionSum = roundToTwoDecimals(totalReductionSum);
+  totalNetAgentParcelsSum = roundToTwoDecimals(totalNetAgentParcelsSum);
   totalExtraSum = roundToTwoDecimals(totalExtraSum);
   totalTodayWinsSum = roundToTwoDecimals(totalTodayWinsSum);
 
@@ -178,6 +220,10 @@ export function calculateDailyScanSummary(
     difference,
     isBalanced,
     totalAgentParcelsSum,
+    totalReductionSum,
+    totalNetAgentParcelsSum,
+    totalAgentParcelsCount,
+    totalReductionCount,
     totalExtraSum,
     totalTodayWinsSum,
   };
@@ -483,6 +529,7 @@ export function buildStaffEntriesFromDirectory(
       id: `${m.id}_${Date.now()}_${idx}`,
       staffName: m.name,
       agentParcels: [],
+      returnedParcels: [],
       additionalBalanceOnly: [],
       additionalTodayWins: [],
       previousBalance: previousWinsMap[m.name] || 0,
@@ -490,6 +537,7 @@ export function buildStaffEntriesFromDirectory(
       returnClaims: 0,
       actualClosingBalance: 0,
       agentDraft: "",
+      reductionDraft: "",
       additionalBalanceDraft: "",
       additionalTodayDraft: "",
     }));

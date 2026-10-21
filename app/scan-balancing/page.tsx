@@ -131,6 +131,7 @@ export default function WinTicketsScanBalancingPage() {
       id: entry.id?.toString() ?? Date.now().toString(),
       staffName: entry.staffName || "",
       agentParcels: Array.isArray(entry.agentParcels) ? entry.agentParcels : [],
+      returnedParcels: Array.isArray(entry.returnedParcels) ? entry.returnedParcels : [],
       additionalBalanceOnly: Array.isArray(entry.additionalBalanceOnly) ? entry.additionalBalanceOnly : [],
       additionalTodayWins: Array.isArray(entry.additionalTodayWins) ? entry.additionalTodayWins : [],
       previousBalance: entry.previousBalance ?? 0,
@@ -138,6 +139,7 @@ export default function WinTicketsScanBalancingPage() {
       returnClaims: entry.returnClaims ?? 0,
       actualClosingBalance: entry.actualClosingBalance ?? 0,
       agentDraft: "",
+      reductionDraft: "",
       additionalBalanceDraft: "",
       additionalTodayDraft: "",
     };
@@ -200,6 +202,7 @@ export default function WinTicketsScanBalancingPage() {
       id: `${member.id}_${Date.now()}`,
       staffName: member.name,
       agentParcels: [],
+      returnedParcels: [],
       additionalBalanceOnly: [],
       additionalTodayWins: [],
       previousBalance: 0,
@@ -207,6 +210,7 @@ export default function WinTicketsScanBalancingPage() {
       returnClaims: 0,
       actualClosingBalance: 0,
       agentDraft: "",
+      reductionDraft: "",
       additionalBalanceDraft: "",
       additionalTodayDraft: "",
     };
@@ -236,6 +240,7 @@ export default function WinTicketsScanBalancingPage() {
         id: entry.id,
         staffName: entry.staffName,
         agentParcels: (entry.agentParcels || []).filter((p) => typeof p === "number" && p > 0),
+        returnedParcels: (entry.returnedParcels || []).filter((p) => typeof p === "number" && p > 0),
         additionalBalanceOnly: (entry.additionalBalanceOnly || []).filter((p) => typeof p === "number" && p > 0),
         additionalTodayWins: (entry.additionalTodayWins || []).filter((p) => typeof p === "number" && p > 0),
         previousBalance: entry.previousBalance || 0,
@@ -327,13 +332,14 @@ export default function WinTicketsScanBalancingPage() {
 
   const updateDraft = (
     id: string,
-    type: "agent" | "additionalBalance" | "additionalToday",
+    type: "agent" | "reduction" | "additionalBalance" | "additionalToday",
     value: string
   ) => {
     setStaffEntries((prev) =>
       prev.map((s) => {
         if (s.id !== id) return s;
         if (type === "agent") return { ...s, agentDraft: value };
+        if (type === "reduction") return { ...s, reductionDraft: value };
         if (type === "additionalBalance") return { ...s, additionalBalanceDraft: value };
         return { ...s, additionalTodayDraft: value };
       })
@@ -342,7 +348,7 @@ export default function WinTicketsScanBalancingPage() {
 
   const addValueFromDraft = (
     id: string,
-    type: "agent" | "additionalBalance" | "additionalToday"
+    type: "agent" | "reduction" | "additionalBalance" | "additionalToday"
   ) => {
     setStaffEntries((prev) =>
       prev.map((s) => {
@@ -351,6 +357,8 @@ export default function WinTicketsScanBalancingPage() {
         const draftField =
           type === "agent"
             ? "agentDraft"
+            : type === "reduction"
+            ? "reductionDraft"
             : type === "additionalBalance"
             ? "additionalBalanceDraft"
             : "additionalTodayDraft";
@@ -363,6 +371,8 @@ export default function WinTicketsScanBalancingPage() {
         const targetArrayKey =
           type === "agent"
             ? "agentParcels"
+            : type === "reduction"
+            ? "returnedParcels"
             : type === "additionalBalance"
             ? "additionalBalanceOnly"
             : "additionalTodayWins";
@@ -379,7 +389,7 @@ export default function WinTicketsScanBalancingPage() {
 
   const removeValue = (
     id: string,
-    type: "agent" | "additionalBalance" | "additionalToday",
+    type: "agent" | "reduction" | "additionalBalance" | "additionalToday",
     index: number
   ) => {
     setStaffEntries((prev) =>
@@ -389,6 +399,8 @@ export default function WinTicketsScanBalancingPage() {
         const targetArrayKey =
           type === "agent"
             ? "agentParcels"
+            : type === "reduction"
+            ? "returnedParcels"
             : type === "additionalBalance"
             ? "additionalBalanceOnly"
             : "additionalTodayWins";
@@ -396,7 +408,7 @@ export default function WinTicketsScanBalancingPage() {
         setIsDirty(true);
         return {
           ...s,
-          [targetArrayKey]: s[targetArrayKey].filter((_, i) => i !== index),
+          [targetArrayKey]: (s[targetArrayKey] || []).filter((_, i) => i !== index),
         };
       })
     );
@@ -429,7 +441,11 @@ export default function WinTicketsScanBalancingPage() {
         "Mail Amount": staff.mailAmount,
         "Return Claims": staff.returnClaims,
         "Actual Closing": staff.actualClosingBalance,
-        "Agent Parcels Total": totals.agentSum,
+        "Assigned Parcels Total": totals.agentSum,
+        "Assigned Parcels Count": totals.agentCount,
+        "Returned Parcels (Reduction)": totals.reductionSum,
+        "Returned Parcels Count": totals.reductionCount,
+        "Net Agent Parcels": totals.netAgentSum,
         "Extra Balance": totals.extraSum,
         "Tomorrow Wins": totals.todaySum,
         "Wins For Balance": totals.winsForBalance,
@@ -444,6 +460,11 @@ export default function WinTicketsScanBalancingPage() {
       ["WIN TICKETS SCAN BALANCING REPORT", ""],
       ["Balance Date", selectedDate],
       ["Agent Wins Target", dailySummary.targetAmount],
+      ["Total Assigned Parcels Sum", dailySummary.totalAgentParcelsSum],
+      ["Total Assigned Parcels Count", dailySummary.totalAgentParcelsCount],
+      ["Total Returned Parcels Sum", dailySummary.totalReductionSum],
+      ["Total Returned Parcels Count", dailySummary.totalReductionCount],
+      ["Total Net Agent Parcels", dailySummary.totalNetAgentParcelsSum],
       ["Total Assigned Scanned", dailySummary.totalAssignedScanned],
       ["Office Difference", dailySummary.difference],
       ["Status", dailySummary.isBalanced ? "BALANCED" : "UNBALANCED"],
@@ -452,7 +473,7 @@ export default function WinTicketsScanBalancingPage() {
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(summaryMeta);
-    XLSX.utils.sheet_add_json(ws, dataRows, { origin: "A8" });
+    XLSX.utils.sheet_add_json(ws, dataRows, { origin: "A10" });
     XLSX.utils.book_append_sheet(wb, ws, "Scan Balancing");
     XLSX.writeFile(wb, `Scan_Balancing_${selectedDate}.xlsx`);
   };
@@ -567,6 +588,21 @@ export default function WinTicketsScanBalancingPage() {
               </span>
               <div className="text-xl font-bold font-mono text-slate-900 truncate">
                 {formatCurrency(dailySummary.totalAssignedScanned)}
+              </div>
+              <div className="flex flex-wrap items-center gap-x-2 text-[10px] text-slate-500 font-medium">
+                <span>
+                  Assigned:{" "}
+                  <strong className="font-mono text-slate-700">
+                    {formatCurrency(dailySummary.totalAgentParcelsSum)}
+                  </strong>{" "}
+                  ({dailySummary.totalAgentParcelsCount})
+                </span>
+                {dailySummary.totalReductionSum > 0 && (
+                  <span className="text-rose-600 font-semibold">
+                    • Ret: -{formatCurrency(dailySummary.totalReductionSum)} (
+                    {dailySummary.totalReductionCount})
+                  </span>
+                )}
               </div>
             </div>
 
@@ -1054,184 +1090,308 @@ export default function WinTicketsScanBalancingPage() {
                           </div>
                         </div>
 
-                        {/* Row 2: 3 Parcel Scanning Sections */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                          {/* 1. Agent Parcels */}
-                          <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-2">
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="font-bold text-slate-800">Agent Parcels</span>
-                              <span className="font-mono font-bold text-blue-700">
-                                {formatCurrency(totals.agentSum)}
-                              </span>
-                            </div>
+                        {/* Row 2: 4 Parcel Scanning & Adjustment Sections */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                          {/* 1. Agent Parcels (Assigned) */}
+                          <div className="rounded-xl border border-blue-200/90 bg-blue-50/25 p-3 space-y-2 flex flex-col justify-between">
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-slate-800">Agent Parcels</span>
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                    {totals.agentCount} {totals.agentCount === 1 ? "parcel" : "parcels"}
+                                  </span>
+                                </div>
+                                <span className="font-mono font-bold text-blue-700 text-sm">
+                                  {formatCurrency(totals.agentSum)}
+                                </span>
+                              </div>
 
-                            {mode === "admin" && (
-                              <div className="flex items-center gap-1">
+                              {/* Prominent Total Parcels Assigned Summary Bar */}
+                              <div className="bg-white px-2.5 py-1.5 rounded-lg border border-blue-200 shadow-2xs space-y-0.5">
+                                <div className="flex items-center justify-between text-xs text-slate-800">
+                                  <span className="text-[11px] font-semibold text-slate-600">Total Parcels Assigned:</span>
+                                  <span className="font-mono font-bold text-blue-900">
+                                    {totals.agentCount} {totals.agentCount === 1 ? "parcel" : "parcels"} ({formatCurrency(totals.agentSum)})
+                                  </span>
+                                </div>
+                                {totals.reductionSum > 0 && (
+                                  <div className="flex items-center justify-between text-[10px] text-slate-500 pt-0.5 border-t border-slate-100">
+                                    <span>Net after returns:</span>
+                                    <span className="font-mono font-bold text-slate-800">
+                                      {totals.netAgentCount} pcs • {formatCurrency(totals.netAgentSum)}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {mode === "admin" && (
+                                <div className="flex items-center gap-1 pt-0.5">
+                                  <input
+                                    type="number"
+                                    value={staff.agentDraft ?? ""}
+                                    onChange={(e) => updateDraft(staff.id, "agent", e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        addValueFromDraft(staff.id, "agent");
+                                      }
+                                    }}
+                                    placeholder="Amount (Press Enter)"
+                                    className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => addValueFromDraft(staff.id, "agent")}
+                                    className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-bold transition shadow-2xs cursor-pointer"
+                                    title="Add assigned parcel"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              )}
+
+                              <div className="flex flex-wrap gap-1 min-h-[38px] max-h-56 overflow-y-auto p-1.5 rounded bg-white border border-slate-200">
+                                {(staff.agentParcels || []).length === 0 ? (
+                                  <span className="text-[11px] text-slate-400 italic">No parcels assigned</span>
+                                ) : (
+                                  staff.agentParcels.map((p, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="px-1.5 py-0.5 rounded bg-slate-100 text-[11px] font-mono font-semibold text-slate-800 flex items-center gap-1 border border-slate-200 hover:bg-slate-200/70 transition"
+                                    >
+                                      <span>{formatCurrency(p)}</span>
+                                      {mode === "admin" && (
+                                        <button
+                                          type="button"
+                                          onClick={() => removeValue(staff.id, "agent", idx)}
+                                          className="text-red-500 hover:text-red-700 font-bold ml-0.5 cursor-pointer"
+                                          title="Remove parcel"
+                                        >
+                                          ×
+                                        </button>
+                                      )}
+                                    </span>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 2. Parcel Reductions (Returned Unscanned) */}
+                          <div className="rounded-xl border border-rose-200/90 bg-rose-50/30 p-3 space-y-2 flex flex-col justify-between">
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-slate-800">Reductions / Returns</span>
+                                  {totals.reductionCount > 0 && (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                      {totals.reductionCount} {totals.reductionCount === 1 ? "parcel" : "parcels"}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="font-mono font-bold text-rose-700 text-sm">
+                                  {totals.reductionSum > 0 ? `-${formatCurrency(totals.reductionSum)}` : formatCurrency(0)}
+                                </span>
+                              </div>
+
+                              {/* Explanatory Banner & Returned Summary */}
+                              <div className="bg-white px-2.5 py-1.5 rounded-lg border border-rose-200 shadow-2xs text-slate-800 space-y-0.5">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-[11px] font-semibold text-slate-600">Unable to scan & returned:</span>
+                                  <span className="font-mono font-bold text-rose-900">
+                                    {totals.reductionCount > 0
+                                      ? `${totals.reductionCount} returned • -${formatCurrency(totals.reductionSum)}`
+                                      : "Rs. 0.00"}
+                                  </span>
+                                </div>
+                                <div className="text-[10px] text-slate-500 italic">
+                                  Deducted from parcel target for this staff
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1 pt-0.5">
                                 <input
                                   type="number"
-                                  value={staff.agentDraft ?? ""}
-                                  onChange={(e) => updateDraft(staff.id, "agent", e.target.value)}
+                                  value={staff.reductionDraft ?? ""}
+                                  onChange={(e) => updateDraft(staff.id, "reduction", e.target.value)}
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter") {
                                       e.preventDefault();
-                                      addValueFromDraft(staff.id, "agent");
+                                      addValueFromDraft(staff.id, "reduction");
                                     }
                                   }}
-                                  placeholder="Amount (Press Enter)"
-                                  className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white focus:outline-none"
+                                  placeholder="Returned amount (Press Enter)"
+                                  className="w-full px-2 py-1 text-xs border border-rose-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-rose-500 font-mono"
                                 />
                                 <button
                                   type="button"
-                                  onClick={() => addValueFromDraft(staff.id, "agent")}
-                                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-bold"
+                                  onClick={() => addValueFromDraft(staff.id, "reduction")}
+                                  className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-bold transition shadow-2xs cursor-pointer"
+                                  title="Add returned parcel reduction"
                                 >
                                   +
                                 </button>
                               </div>
-                            )}
 
-                            <div className="flex flex-wrap gap-1 min-h-[32px] p-1.5 rounded bg-white border border-slate-200">
-                              {(staff.agentParcels || []).length === 0 ? (
-                                <span className="text-[11px] text-slate-400 italic">No parcels</span>
-                              ) : (
-                                staff.agentParcels.map((p, idx) => (
-                                  <span
-                                    key={idx}
-                                    className="px-1.5 py-0.5 rounded bg-slate-100 text-[11px] font-mono font-semibold text-slate-800 flex items-center gap-1 border border-slate-200"
-                                  >
-                                    <span>{formatCurrency(p)}</span>
-                                    {mode === "admin" && (
+                              <div className="flex flex-wrap gap-1 min-h-[38px] max-h-56 overflow-y-auto p-1.5 rounded bg-white border border-rose-200">
+                                {(staff.returnedParcels || []).length === 0 ? (
+                                  <span className="text-[11px] text-slate-400 italic">No returned parcels</span>
+                                ) : (
+                                  (staff.returnedParcels || []).map((p, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="px-1.5 py-0.5 rounded bg-rose-50 text-[11px] font-mono font-semibold text-rose-900 flex items-center gap-1 border border-rose-200 hover:bg-rose-100 transition"
+                                    >
+                                      <span>{formatCurrency(p)}</span>
                                       <button
                                         type="button"
-                                        onClick={() => removeValue(staff.id, "agent", idx)}
-                                        className="text-red-500 hover:text-red-700 font-bold"
+                                        onClick={() => removeValue(staff.id, "reduction", idx)}
+                                        className="text-rose-600 hover:text-rose-800 font-bold ml-0.5 cursor-pointer"
+                                        title="Remove reduction"
                                       >
                                         ×
                                       </button>
-                                    )}
-                                  </span>
-                                ))
-                              )}
+                                    </span>
+                                  ))
+                                )}
+                              </div>
                             </div>
                           </div>
 
-                          {/* 2. Additional (This Balance) */}
-                          <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-2">
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="font-bold text-slate-800">Additional (This Balance)</span>
-                              <span className="font-mono font-bold text-teal-700">
-                                {formatCurrency(totals.extraSum)}
-                              </span>
-                            </div>
+                          {/* 3. Additional (This Balance) */}
+                          <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-2 flex flex-col justify-between">
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="font-bold text-slate-800">Additional (This Balance)</span>
+                                <span className="font-mono font-bold text-teal-700 text-sm">
+                                  {formatCurrency(totals.extraSum)}
+                                </span>
+                              </div>
 
-                            <div className="flex items-center gap-1">
-                              <input
-                                type="number"
-                                value={staff.additionalBalanceDraft ?? ""}
-                                onChange={(e) =>
-                                  updateDraft(staff.id, "additionalBalance", e.target.value)
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    addValueFromDraft(staff.id, "additionalBalance");
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  value={staff.additionalBalanceDraft ?? ""}
+                                  onChange={(e) =>
+                                    updateDraft(staff.id, "additionalBalance", e.target.value)
                                   }
-                                }}
-                                placeholder="Amount (Press Enter)"
-                                className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white focus:outline-none"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => addValueFromDraft(staff.id, "additionalBalance")}
-                                className="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded text-xs font-bold"
-                              >
-                                +
-                              </button>
-                            </div>
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      addValueFromDraft(staff.id, "additionalBalance");
+                                    }
+                                  }}
+                                  placeholder="Amount (Press Enter)"
+                                  className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-teal-500 font-mono"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => addValueFromDraft(staff.id, "additionalBalance")}
+                                  className="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded text-xs font-bold transition shadow-2xs cursor-pointer"
+                                >
+                                  +
+                                </button>
+                              </div>
 
-                            <div className="flex flex-wrap gap-1 min-h-[32px] p-1.5 rounded bg-white border border-slate-200">
-                              {(staff.additionalBalanceOnly || []).length === 0 ? (
-                                <span className="text-[11px] text-slate-400 italic">No extra amounts</span>
-                              ) : (
-                                staff.additionalBalanceOnly.map((p, idx) => (
-                                  <span
-                                    key={idx}
-                                    className="px-1.5 py-0.5 rounded bg-teal-50 text-[11px] font-mono font-semibold text-teal-900 flex items-center gap-1 border border-teal-200"
-                                  >
-                                    <span>{formatCurrency(p)}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => removeValue(staff.id, "additionalBalance", idx)}
-                                      className="text-red-500 hover:text-red-700 font-bold"
+                              <div className="flex flex-wrap gap-1 min-h-[38px] max-h-56 overflow-y-auto p-1.5 rounded bg-white border border-slate-200">
+                                {(staff.additionalBalanceOnly || []).length === 0 ? (
+                                  <span className="text-[11px] text-slate-400 italic">No extra amounts</span>
+                                ) : (
+                                  staff.additionalBalanceOnly.map((p, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="px-1.5 py-0.5 rounded bg-teal-50 text-[11px] font-mono font-semibold text-teal-900 flex items-center gap-1 border border-teal-200 hover:bg-teal-100 transition"
                                     >
-                                      ×
-                                    </button>
-                                  </span>
-                                ))
-                              )}
+                                      <span>{formatCurrency(p)}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => removeValue(staff.id, "additionalBalance", idx)}
+                                        className="text-red-500 hover:text-red-700 font-bold ml-0.5 cursor-pointer"
+                                      >
+                                        ×
+                                      </button>
+                                    </span>
+                                  ))
+                                )}
+                              </div>
                             </div>
                           </div>
 
-                          {/* 3. Today's Wins (Tomorrow Balance) */}
-                          <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-2">
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="font-bold text-slate-800">Tomorrow Balance Wins</span>
-                              <span className="font-mono font-bold text-purple-700">
-                                {formatCurrency(totals.todaySum)}
-                              </span>
-                            </div>
+                          {/* 4. Today's Wins (Tomorrow Balance) */}
+                          <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-2 flex flex-col justify-between">
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="font-bold text-slate-800">Tomorrow Balance Wins</span>
+                                <span className="font-mono font-bold text-purple-700 text-sm">
+                                  {formatCurrency(totals.todaySum)}
+                                </span>
+                              </div>
 
-                            <div className="flex items-center gap-1">
-                              <input
-                                type="number"
-                                value={staff.additionalTodayDraft ?? ""}
-                                onChange={(e) =>
-                                  updateDraft(staff.id, "additionalToday", e.target.value)
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    addValueFromDraft(staff.id, "additionalToday");
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  value={staff.additionalTodayDraft ?? ""}
+                                  onChange={(e) =>
+                                    updateDraft(staff.id, "additionalToday", e.target.value)
                                   }
-                                }}
-                                placeholder="Amount (Press Enter)"
-                                className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white focus:outline-none"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => addValueFromDraft(staff.id, "additionalToday")}
-                                className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-bold"
-                              >
-                                +
-                              </button>
-                            </div>
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      addValueFromDraft(staff.id, "additionalToday");
+                                    }
+                                  }}
+                                  placeholder="Amount (Press Enter)"
+                                  className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => addValueFromDraft(staff.id, "additionalToday")}
+                                  className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-bold transition shadow-2xs cursor-pointer"
+                                >
+                                  +
+                                </button>
+                              </div>
 
-                            <div className="flex flex-wrap gap-1 min-h-[32px] p-1.5 rounded bg-white border border-slate-200">
-                              {(staff.additionalTodayWins || []).length === 0 ? (
-                                <span className="text-[11px] text-slate-400 italic">No tomorrow wins</span>
-                              ) : (
-                                staff.additionalTodayWins.map((p, idx) => (
-                                  <span
-                                    key={idx}
-                                    className="px-1.5 py-0.5 rounded bg-purple-50 text-[11px] font-mono font-semibold text-purple-900 flex items-center gap-1 border border-purple-200"
-                                  >
-                                    <span>{formatCurrency(p)}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => removeValue(staff.id, "additionalToday", idx)}
-                                      className="text-red-500 hover:text-red-700 font-bold"
+                              <div className="flex flex-wrap gap-1 min-h-[38px] max-h-56 overflow-y-auto p-1.5 rounded bg-white border border-slate-200">
+                                {(staff.additionalTodayWins || []).length === 0 ? (
+                                  <span className="text-[11px] text-slate-400 italic">No tomorrow wins</span>
+                                ) : (
+                                  staff.additionalTodayWins.map((p, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="px-1.5 py-0.5 rounded bg-purple-50 text-[11px] font-mono font-semibold text-purple-900 flex items-center gap-1 border border-purple-200 hover:bg-purple-100 transition"
                                     >
-                                      ×
-                                    </button>
-                                  </span>
-                                ))
-                              )}
+                                      <span>{formatCurrency(p)}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => removeValue(staff.id, "additionalToday", idx)}
+                                        className="text-red-500 hover:text-red-700 font-bold ml-0.5 cursor-pointer"
+                                      >
+                                        ×
+                                      </button>
+                                    </span>
+                                  ))
+                                )}
+                              </div>
                             </div>
                           </div>
                         </div>
 
                         {/* Row 3: Mathematical Reconciliation Summary */}
-                        <div className="rounded-xl bg-slate-900 text-white p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                        <div className="rounded-xl bg-slate-900 text-white p-4 grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+                          <div>
+                            <span className="text-slate-400 block text-[11px]">Net Agent Parcels</span>
+                            <span className="font-mono font-bold text-sm text-cyan-300">
+                              {formatCurrency(totals.netAgentSum)}
+                            </span>
+                            {totals.reductionSum > 0 && (
+                              <span className="text-[10px] text-slate-400 block font-mono">
+                                {formatCurrency(totals.agentSum)} - {formatCurrency(totals.reductionSum)}
+                              </span>
+                            )}
+                          </div>
+
                           <div>
                             <span className="text-slate-400 block text-[11px]">Wins for Balance</span>
                             <span className="font-mono font-bold text-sm text-blue-300">
@@ -1285,7 +1445,9 @@ export default function WinTicketsScanBalancingPage() {
                           <th className="px-3 py-2.5 text-right">Mail</th>
                           <th className="px-3 py-2.5 text-right">Returns</th>
                           <th className="px-3 py-2.5 text-right">Closing</th>
-                          <th className="px-3 py-2.5 text-right">Parcels</th>
+                          <th className="px-3 py-2.5 text-right">Assigned Parcels</th>
+                          <th className="px-3 py-2.5 text-right">Reductions</th>
+                          <th className="px-3 py-2.5 text-right">Net Parcels</th>
                           <th className="px-3 py-2.5 text-right">Scanned</th>
                           <th className="px-3 py-2.5 text-right">Diff</th>
                           <th className="px-3 py-2.5 text-center">Status</th>
@@ -1319,7 +1481,21 @@ export default function WinTicketsScanBalancingPage() {
                                 {formatCurrency(staff.actualClosingBalance)}
                               </td>
                               <td className="px-3 py-2 text-right text-blue-700">
-                                {formatCurrency(totals.agentSum)}
+                                <div>{formatCurrency(totals.agentSum)}</div>
+                                <div className="text-[10px] text-slate-500 font-sans">({totals.agentCount} pcs)</div>
+                              </td>
+                              <td className="px-3 py-2 text-right text-rose-600">
+                                {totals.reductionSum > 0 ? (
+                                  <>
+                                    <div>-{formatCurrency(totals.reductionSum)}</div>
+                                    <div className="text-[10px] text-rose-500 font-sans">({totals.reductionCount} ret)</div>
+                                  </>
+                                ) : (
+                                  <span className="text-slate-400">-</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-right font-bold text-slate-900">
+                                {formatCurrency(totals.netAgentSum)}
                               </td>
                               <td className="px-3 py-2 text-right font-bold text-emerald-800">
                                 {formatCurrency(totals.assignedScanned)}

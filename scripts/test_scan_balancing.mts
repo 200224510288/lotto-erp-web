@@ -55,3 +55,32 @@ console.assert(built[1].staffName === "Dilrukshi", "Expected Dilrukshi second");
 console.assert(built[1].previousBalance === 0, "Expected previousBalance 0 for Dilrukshi");
 console.log("✓ Staff Directory Allocation Builder verified successfully!");
 
+console.log("=== Testing Staff Reduction (Unable to Scan & Returned) ===");
+const staffWithReturn: StaffEntry = {
+  id: "2",
+  staffName: "Sunil",
+  agentParcels: [10000, 20000, 30000], // 60,000 (3 parcels)
+  returnedParcels: [5000], // 5,000 returned unscanned (1 parcel)
+  additionalBalanceOnly: [],
+  additionalTodayWins: [],
+  previousBalance: 0,
+  mailAmount: 25000,
+  returnClaims: 0,
+  actualClosingBalance: 30000, // 55,000 - 25,000 = 30,000
+};
+
+const returnTotals = calculateStaffTotals(staffWithReturn);
+console.assert(returnTotals.agentSum === 60000, `Expected 60000, got ${returnTotals.agentSum}`);
+console.assert(returnTotals.agentCount === 3, `Expected 3 agent parcels, got ${returnTotals.agentCount}`);
+console.assert(returnTotals.reductionSum === 5000, `Expected 5000 reduction, got ${returnTotals.reductionSum}`);
+console.assert(returnTotals.reductionCount === 1, `Expected 1 reduction parcel, got ${returnTotals.reductionCount}`);
+console.assert(returnTotals.netAgentSum === 55000, `Expected 55000 netAgentSum, got ${returnTotals.netAgentSum}`);
+console.assert(returnTotals.netAgentCount === 2, `Expected 2 netAgentCount, got ${returnTotals.netAgentCount}`);
+console.assert(returnTotals.winsForBalance === 55000, `Expected 55000 winsForBalance, got ${returnTotals.winsForBalance}`);
+console.assert(returnTotals.predicted === 30000, `Expected 30000 predicted, got ${returnTotals.predicted}`);
+console.assert(returnTotals.actual === 30000, `Expected 30000 actual, got ${returnTotals.actual}`);
+console.assert(returnTotals.diff === 0, `Expected 0 diff, got ${returnTotals.diff}`);
+console.assert(returnTotals.assignedScanned === 55000, `Expected 55000 assignedScanned, got ${returnTotals.assignedScanned}`);
+console.log("✓ Parcel reduction calculations verified successfully!");
+
+
