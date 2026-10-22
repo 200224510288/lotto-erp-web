@@ -34,6 +34,12 @@ export interface StaffEntry {
   additionalBalanceOnly: number[];
   additionalTodayWins: number[];
 
+  // Verified / Checked parcel tracking (array of indices)
+  verifiedAgentParcels?: number[];
+  verifiedReturnedParcels?: number[];
+  verifiedAdditionalBalance?: number[];
+  verifiedAdditionalToday?: number[];
+
   previousBalance: number;
   mailAmount: number;
   returnClaims: number;
@@ -52,6 +58,10 @@ export interface StaffEntryPayload {
   returnedParcels?: number[];
   additionalBalanceOnly: number[];
   additionalTodayWins: number[];
+  verifiedAgentParcels?: number[];
+  verifiedReturnedParcels?: number[];
+  verifiedAdditionalBalance?: number[];
+  verifiedAdditionalToday?: number[];
   previousBalance: number;
   mailAmount: number;
   returnClaims: number;

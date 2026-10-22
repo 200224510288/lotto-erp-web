@@ -126,6 +126,31 @@ export default function WinTicketsScanBalancingPage() {
     }
   };
 
+  const getLocalStorageKey = (date: string) => `dlb_scan_verified_${date}`;
+
+  const saveVerifiedToLocalStorage = (date: string, entries: StaffEntry[]) => {
+    if (typeof window === "undefined") return;
+    try {
+      const data: Record<string, {
+        agent?: number[];
+        reduction?: number[];
+        additionalBalance?: number[];
+        additionalToday?: number[];
+      }> = {};
+      entries.forEach((s) => {
+        data[s.id] = {
+          agent: s.verifiedAgentParcels || [],
+          reduction: s.verifiedReturnedParcels || [],
+          additionalBalance: s.verifiedAdditionalBalance || [],
+          additionalToday: s.verifiedAdditionalToday || [],
+        };
+      });
+      localStorage.setItem(getLocalStorageKey(date), JSON.stringify(data));
+    } catch (e) {
+      // Ignore storage errors
+    }
+  };
+
   const normalizeStaffEntry = (entry: Partial<StaffEntryPayload>): StaffEntry => {
     return {
       id: entry.id?.toString() ?? Date.now().toString(),
@@ -134,6 +159,10 @@ export default function WinTicketsScanBalancingPage() {
       returnedParcels: Array.isArray(entry.returnedParcels) ? entry.returnedParcels : [],
       additionalBalanceOnly: Array.isArray(entry.additionalBalanceOnly) ? entry.additionalBalanceOnly : [],
       additionalTodayWins: Array.isArray(entry.additionalTodayWins) ? entry.additionalTodayWins : [],
+      verifiedAgentParcels: Array.isArray(entry.verifiedAgentParcels) ? entry.verifiedAgentParcels : [],
+      verifiedReturnedParcels: Array.isArray(entry.verifiedReturnedParcels) ? entry.verifiedReturnedParcels : [],
+      verifiedAdditionalBalance: Array.isArray(entry.verifiedAdditionalBalance) ? entry.verifiedAdditionalBalance : [],
+      verifiedAdditionalToday: Array.isArray(entry.verifiedAdditionalToday) ? entry.verifiedAdditionalToday : [],
       previousBalance: entry.previousBalance ?? 0,
       mailAmount: entry.mailAmount ?? 0,
       returnClaims: entry.returnClaims ?? 0,
@@ -150,10 +179,38 @@ export default function WinTicketsScanBalancingPage() {
     setError(null);
     setIsDirty(false);
     try {
+      let localCache: Record<string, any> = {};
+      if (typeof window !== "undefined") {
+        try {
+          const raw = localStorage.getItem(getLocalStorageKey(dateStr));
+          if (raw) localCache = JSON.parse(raw);
+        } catch (e) {}
+      }
+
       const claim = await getDailyScanClaim(dateStr);
       if (claim && claim.staffEntries && claim.staffEntries.length > 0) {
         setTotalAgentClaim(claim.totalAgentClaim ? claim.totalAgentClaim.toString() : "");
-        setStaffEntries(claim.staffEntries.map((e) => normalizeStaffEntry(e)));
+        setStaffEntries(
+          claim.staffEntries.map((e) => {
+            const normalized = normalizeStaffEntry(e);
+            const cached = localCache[normalized.id];
+            if (cached) {
+              if ((!normalized.verifiedAgentParcels || normalized.verifiedAgentParcels.length === 0) && cached.agent) {
+                normalized.verifiedAgentParcels = cached.agent;
+              }
+              if ((!normalized.verifiedReturnedParcels || normalized.verifiedReturnedParcels.length === 0) && cached.reduction) {
+                normalized.verifiedReturnedParcels = cached.reduction;
+              }
+              if ((!normalized.verifiedAdditionalBalance || normalized.verifiedAdditionalBalance.length === 0) && cached.additionalBalance) {
+                normalized.verifiedAdditionalBalance = cached.additionalBalance;
+              }
+              if ((!normalized.verifiedAdditionalToday || normalized.verifiedAdditionalToday.length === 0) && cached.additionalToday) {
+                normalized.verifiedAdditionalToday = cached.additionalToday;
+              }
+            }
+            return normalized;
+          })
+        );
       } else {
         setTotalAgentClaim("");
         setStaffEntries([]);
@@ -205,6 +262,10 @@ export default function WinTicketsScanBalancingPage() {
       returnedParcels: [],
       additionalBalanceOnly: [],
       additionalTodayWins: [],
+      verifiedAgentParcels: [],
+      verifiedReturnedParcels: [],
+      verifiedAdditionalBalance: [],
+      verifiedAdditionalToday: [],
       previousBalance: 0,
       mailAmount: 0,
       returnClaims: 0,
@@ -243,6 +304,10 @@ export default function WinTicketsScanBalancingPage() {
         returnedParcels: (entry.returnedParcels || []).filter((p) => typeof p === "number" && p > 0),
         additionalBalanceOnly: (entry.additionalBalanceOnly || []).filter((p) => typeof p === "number" && p > 0),
         additionalTodayWins: (entry.additionalTodayWins || []).filter((p) => typeof p === "number" && p > 0),
+        verifiedAgentParcels: entry.verifiedAgentParcels || [],
+        verifiedReturnedParcels: entry.verifiedReturnedParcels || [],
+        verifiedAdditionalBalance: entry.verifiedAdditionalBalance || [],
+        verifiedAdditionalToday: entry.verifiedAdditionalToday || [],
         previousBalance: entry.previousBalance || 0,
         mailAmount: entry.mailAmount || 0,
         returnClaims: entry.returnClaims || 0,
@@ -257,6 +322,7 @@ export default function WinTicketsScanBalancingPage() {
       };
 
       await saveDailyScanClaim(claimData);
+      saveVerifiedToLocalStorage(selectedDate, staffEntries);
       setSuccess("Scan balancing saved successfully!");
       setIsDirty(false);
       setTimeout(() => setSuccess(null), 3000);
@@ -392,8 +458,8 @@ export default function WinTicketsScanBalancingPage() {
     type: "agent" | "reduction" | "additionalBalance" | "additionalToday",
     index: number
   ) => {
-    setStaffEntries((prev) =>
-      prev.map((s) => {
+    setStaffEntries((prev) => {
+      const updated = prev.map((s) => {
         if (s.id !== id) return s;
 
         const targetArrayKey =
@@ -405,13 +471,91 @@ export default function WinTicketsScanBalancingPage() {
             ? "additionalBalanceOnly"
             : "additionalTodayWins";
 
-        setIsDirty(true);
+        const verifiedKey =
+          type === "agent"
+            ? "verifiedAgentParcels"
+            : type === "reduction"
+            ? "verifiedReturnedParcels"
+            : type === "additionalBalance"
+            ? "verifiedAdditionalBalance"
+            : "verifiedAdditionalToday";
+
+        const currentVerified: number[] = s[verifiedKey] || [];
+        const updatedVerified = currentVerified
+          .filter((i) => i !== index)
+          .map((i) => (i > index ? i - 1 : i));
+
         return {
           ...s,
           [targetArrayKey]: (s[targetArrayKey] || []).filter((_, i) => i !== index),
+          [verifiedKey]: updatedVerified,
         };
-      })
-    );
+      });
+      saveVerifiedToLocalStorage(selectedDate, updated);
+      return updated;
+    });
+    setIsDirty(true);
+  };
+
+  const toggleParcelMark = (
+    staffId: string,
+    type: "agent" | "reduction" | "additionalBalance" | "additionalToday",
+    index: number
+  ) => {
+    const verifiedKey =
+      type === "agent"
+        ? "verifiedAgentParcels"
+        : type === "reduction"
+        ? "verifiedReturnedParcels"
+        : type === "additionalBalance"
+        ? "verifiedAdditionalBalance"
+        : "verifiedAdditionalToday";
+
+    setStaffEntries((prev) => {
+      const updated = prev.map((s) => {
+        if (s.id !== staffId) return s;
+        const currentVerified: number[] = s[verifiedKey] || [];
+        const isMarked = currentVerified.includes(index);
+        const newVerified = isMarked
+          ? currentVerified.filter((i) => i !== index)
+          : [...currentVerified, index];
+
+        return {
+          ...s,
+          [verifiedKey]: newVerified,
+        };
+      });
+      saveVerifiedToLocalStorage(selectedDate, updated);
+      return updated;
+    });
+    setIsDirty(true);
+  };
+
+  const clearParcelMarks = (
+    staffId: string,
+    type: "agent" | "reduction" | "additionalBalance" | "additionalToday"
+  ) => {
+    const verifiedKey =
+      type === "agent"
+        ? "verifiedAgentParcels"
+        : type === "reduction"
+        ? "verifiedReturnedParcels"
+        : type === "additionalBalance"
+        ? "verifiedAdditionalBalance"
+        : "verifiedAdditionalToday";
+
+    setStaffEntries((prev) => {
+      const updated = prev.map((s) => {
+        if (s.id !== staffId) return s;
+        return {
+          ...s,
+          [verifiedKey]: [],
+        };
+      });
+      saveVerifiedToLocalStorage(selectedDate, updated);
+      return updated;
+    });
+    setIsDirty(true);
   };
 
   // Overall Daily Summary
@@ -950,6 +1094,34 @@ export default function WinTicketsScanBalancingPage() {
                   const totals = calculateStaffTotals(staff);
                   const isStaffBalanced = Math.abs(totals.diff) < 0.01;
 
+                  const verifiedAgentIndices = staff.verifiedAgentParcels || [];
+                  const verifiedAgentCount = verifiedAgentIndices.filter(
+                    (i) => i >= 0 && i < (staff.agentParcels || []).length
+                  ).length;
+                  const verifiedAgentSum = verifiedAgentIndices.reduce((sum, idx) => {
+                    const val = staff.agentParcels?.[idx];
+                    return typeof val === "number" && !isNaN(val) ? sum + val : sum;
+                  }, 0);
+
+                  const verifiedReductionIndices = staff.verifiedReturnedParcels || [];
+                  const verifiedReductionCount = verifiedReductionIndices.filter(
+                    (i) => i >= 0 && i < (staff.returnedParcels || []).length
+                  ).length;
+                  const verifiedReductionSum = verifiedReductionIndices.reduce((sum, idx) => {
+                    const val = staff.returnedParcels?.[idx];
+                    return typeof val === "number" && !isNaN(val) ? sum + val : sum;
+                  }, 0);
+
+                  const verifiedAdditionalIndices = staff.verifiedAdditionalBalance || [];
+                  const verifiedAdditionalCount = verifiedAdditionalIndices.filter(
+                    (i) => i >= 0 && i < (staff.additionalBalanceOnly || []).length
+                  ).length;
+
+                  const verifiedTodayIndices = staff.verifiedAdditionalToday || [];
+                  const verifiedTodayCount = verifiedTodayIndices.filter(
+                    (i) => i >= 0 && i < (staff.additionalTodayWins || []).length
+                  ).length;
+
                   return (
                     <div className="rounded-xl border border-slate-300 bg-white shadow-xs overflow-hidden">
                       {/* Header with Navigation and Balanced Indicator */}
@@ -1096,15 +1268,33 @@ export default function WinTicketsScanBalancingPage() {
                           <div className="rounded-xl border border-blue-200/90 bg-blue-50/25 p-3 space-y-2 flex flex-col justify-between">
                             <div className="space-y-1.5">
                               <div className="flex items-center justify-between text-xs">
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex items-center gap-1.5 flex-wrap">
                                   <span className="font-bold text-slate-800">Agent Parcels</span>
                                   <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
                                     {totals.agentCount} {totals.agentCount === 1 ? "parcel" : "parcels"}
                                   </span>
+                                  {verifiedAgentCount > 0 && (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                      {verifiedAgentCount}/{totals.agentCount} verified
+                                    </span>
+                                  )}
                                 </div>
-                                <span className="font-mono font-bold text-blue-700 text-sm">
-                                  {formatCurrency(totals.agentSum)}
-                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  {verifiedAgentCount > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => clearParcelMarks(staff.id, "agent")}
+                                      className="text-[10px] text-slate-400 hover:text-slate-700 underline cursor-pointer"
+                                      title="Reset marked parcels"
+                                    >
+                                      Reset
+                                    </button>
+                                  )}
+                                  <span className="font-mono font-bold text-blue-700 text-sm">
+                                    {formatCurrency(totals.agentSum)}
+                                  </span>
+                                </div>
                               </div>
 
                               {/* Prominent Total Parcels Assigned Summary Bar */}
@@ -1115,6 +1305,17 @@ export default function WinTicketsScanBalancingPage() {
                                     {totals.agentCount} {totals.agentCount === 1 ? "parcel" : "parcels"} ({formatCurrency(totals.agentSum)})
                                   </span>
                                 </div>
+                                {verifiedAgentCount > 0 && (
+                                  <div className="flex items-center justify-between text-[10px] text-emerald-700 font-semibold pt-0.5 border-t border-slate-100">
+                                    <span className="flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                                      Verified:
+                                    </span>
+                                    <span className="font-mono font-bold">
+                                      {verifiedAgentCount} / {totals.agentCount} parcels ({formatCurrency(verifiedAgentSum)})
+                                    </span>
+                                  </div>
+                                )}
                                 {totals.reductionSum > 0 && (
                                   <div className="flex items-center justify-between text-[10px] text-slate-500 pt-0.5 border-t border-slate-100">
                                     <span>Net after returns:</span>
@@ -1155,24 +1356,41 @@ export default function WinTicketsScanBalancingPage() {
                                 {(staff.agentParcels || []).length === 0 ? (
                                   <span className="text-[11px] text-slate-400 italic">No parcels assigned</span>
                                 ) : (
-                                  staff.agentParcels.map((p, idx) => (
-                                    <span
-                                      key={idx}
-                                      className="px-1.5 py-0.5 rounded bg-slate-100 text-[11px] font-mono font-semibold text-slate-800 flex items-center gap-1 border border-slate-200 hover:bg-slate-200/70 transition"
-                                    >
-                                      <span>{formatCurrency(p)}</span>
-                                      {mode === "admin" && (
-                                        <button
-                                          type="button"
-                                          onClick={() => removeValue(staff.id, "agent", idx)}
-                                          className="text-red-500 hover:text-red-700 font-bold ml-0.5 cursor-pointer"
-                                          title="Remove parcel"
-                                        >
-                                          ×
-                                        </button>
-                                      )}
-                                    </span>
-                                  ))
+                                  staff.agentParcels.map((p, idx) => {
+                                    const isMarked = (staff.verifiedAgentParcels || []).includes(idx);
+                                    return (
+                                      <span
+                                        key={idx}
+                                        onClick={() => toggleParcelMark(staff.id, "agent", idx)}
+                                        title={isMarked ? "Verified (click to unmark)" : "Click to mark as verified"}
+                                        className={`px-1.5 py-0.5 rounded text-[11px] font-mono flex items-center gap-1 border transition-all duration-150 cursor-pointer select-none active:scale-95 ${
+                                          isMarked
+                                            ? "bg-emerald-600 text-white font-bold border-emerald-700 shadow-2xs hover:bg-emerald-700 ring-1 ring-emerald-400/50"
+                                            : "bg-slate-100 font-semibold text-slate-800 border-slate-200 hover:bg-slate-200/80 hover:border-slate-300"
+                                        }`}
+                                      >
+                                        {isMarked && (
+                                          <span className="text-[10px] font-black text-emerald-200 leading-none shrink-0">✓</span>
+                                        )}
+                                        <span>{formatCurrency(p)}</span>
+                                        {mode === "admin" && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              removeValue(staff.id, "agent", idx);
+                                            }}
+                                            className={`font-bold ml-0.5 cursor-pointer text-xs leading-none ${
+                                              isMarked ? "text-emerald-200 hover:text-white" : "text-red-500 hover:text-red-700"
+                                            }`}
+                                            title="Remove parcel"
+                                          >
+                                            ×
+                                          </button>
+                                        )}
+                                      </span>
+                                    );
+                                  })
                                 )}
                               </div>
                             </div>
@@ -1182,17 +1400,35 @@ export default function WinTicketsScanBalancingPage() {
                           <div className="rounded-xl border border-rose-200/90 bg-rose-50/30 p-3 space-y-2 flex flex-col justify-between">
                             <div className="space-y-1.5">
                               <div className="flex items-center justify-between text-xs">
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex items-center gap-1.5 flex-wrap">
                                   <span className="font-bold text-slate-800">Reductions / Returns</span>
                                   {totals.reductionCount > 0 && (
                                     <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
                                       {totals.reductionCount} {totals.reductionCount === 1 ? "parcel" : "parcels"}
                                     </span>
                                   )}
+                                  {verifiedReductionCount > 0 && (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                      {verifiedReductionCount}/{totals.reductionCount} verified
+                                    </span>
+                                  )}
                                 </div>
-                                <span className="font-mono font-bold text-rose-700 text-sm">
-                                  {totals.reductionSum > 0 ? `-${formatCurrency(totals.reductionSum)}` : formatCurrency(0)}
-                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  {verifiedReductionCount > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => clearParcelMarks(staff.id, "reduction")}
+                                      className="text-[10px] text-slate-400 hover:text-slate-700 underline cursor-pointer"
+                                      title="Reset marked reductions"
+                                    >
+                                      Reset
+                                    </button>
+                                  )}
+                                  <span className="font-mono font-bold text-rose-700 text-sm">
+                                    {totals.reductionSum > 0 ? `-${formatCurrency(totals.reductionSum)}` : formatCurrency(0)}
+                                  </span>
+                                </div>
                               </div>
 
                               {/* Explanatory Banner & Returned Summary */}
@@ -1238,22 +1474,39 @@ export default function WinTicketsScanBalancingPage() {
                                 {(staff.returnedParcels || []).length === 0 ? (
                                   <span className="text-[11px] text-slate-400 italic">No returned parcels</span>
                                 ) : (
-                                  (staff.returnedParcels || []).map((p, idx) => (
-                                    <span
-                                      key={idx}
-                                      className="px-1.5 py-0.5 rounded bg-rose-50 text-[11px] font-mono font-semibold text-rose-900 flex items-center gap-1 border border-rose-200 hover:bg-rose-100 transition"
-                                    >
-                                      <span>{formatCurrency(p)}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => removeValue(staff.id, "reduction", idx)}
-                                        className="text-rose-600 hover:text-rose-800 font-bold ml-0.5 cursor-pointer"
-                                        title="Remove reduction"
+                                  (staff.returnedParcels || []).map((p, idx) => {
+                                    const isMarked = (staff.verifiedReturnedParcels || []).includes(idx);
+                                    return (
+                                      <span
+                                        key={idx}
+                                        onClick={() => toggleParcelMark(staff.id, "reduction", idx)}
+                                        title={isMarked ? "Verified (click to unmark)" : "Click to mark as verified"}
+                                        className={`px-1.5 py-0.5 rounded text-[11px] font-mono flex items-center gap-1 border transition-all duration-150 cursor-pointer select-none active:scale-95 ${
+                                          isMarked
+                                            ? "bg-emerald-600 text-white font-bold border-emerald-700 shadow-2xs hover:bg-emerald-700 ring-1 ring-emerald-400/50"
+                                            : "bg-rose-50 font-semibold text-rose-900 border-rose-200 hover:bg-rose-100 hover:border-rose-300"
+                                        }`}
                                       >
-                                        ×
-                                      </button>
-                                    </span>
-                                  ))
+                                        {isMarked && (
+                                          <span className="text-[10px] font-black text-emerald-200 leading-none shrink-0">✓</span>
+                                        )}
+                                        <span>{formatCurrency(p)}</span>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            removeValue(staff.id, "reduction", idx);
+                                          }}
+                                          className={`font-bold ml-0.5 cursor-pointer text-xs leading-none ${
+                                            isMarked ? "text-emerald-200 hover:text-white" : "text-rose-600 hover:text-rose-800"
+                                          }`}
+                                          title="Remove reduction"
+                                        >
+                                          ×
+                                        </button>
+                                      </span>
+                                    );
+                                  })
                                 )}
                               </div>
                             </div>
@@ -1263,10 +1516,30 @@ export default function WinTicketsScanBalancingPage() {
                           <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-2 flex flex-col justify-between">
                             <div className="space-y-1.5">
                               <div className="flex items-center justify-between text-xs">
-                                <span className="font-bold text-slate-800">Additional (This Balance)</span>
-                                <span className="font-mono font-bold text-teal-700 text-sm">
-                                  {formatCurrency(totals.extraSum)}
-                                </span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-bold text-slate-800">Additional (This Balance)</span>
+                                  {verifiedAdditionalCount > 0 && (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                      {verifiedAdditionalCount}/{(staff.additionalBalanceOnly || []).length} verified
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  {verifiedAdditionalCount > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => clearParcelMarks(staff.id, "additionalBalance")}
+                                      className="text-[10px] text-slate-400 hover:text-slate-700 underline cursor-pointer"
+                                      title="Reset marked items"
+                                    >
+                                      Reset
+                                    </button>
+                                  )}
+                                  <span className="font-mono font-bold text-teal-700 text-sm">
+                                    {formatCurrency(totals.extraSum)}
+                                  </span>
+                                </div>
                               </div>
 
                               <div className="flex items-center gap-1">
@@ -1298,21 +1571,38 @@ export default function WinTicketsScanBalancingPage() {
                                 {(staff.additionalBalanceOnly || []).length === 0 ? (
                                   <span className="text-[11px] text-slate-400 italic">No extra amounts</span>
                                 ) : (
-                                  staff.additionalBalanceOnly.map((p, idx) => (
-                                    <span
-                                      key={idx}
-                                      className="px-1.5 py-0.5 rounded bg-teal-50 text-[11px] font-mono font-semibold text-teal-900 flex items-center gap-1 border border-teal-200 hover:bg-teal-100 transition"
-                                    >
-                                      <span>{formatCurrency(p)}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => removeValue(staff.id, "additionalBalance", idx)}
-                                        className="text-red-500 hover:text-red-700 font-bold ml-0.5 cursor-pointer"
+                                  staff.additionalBalanceOnly.map((p, idx) => {
+                                    const isMarked = (staff.verifiedAdditionalBalance || []).includes(idx);
+                                    return (
+                                      <span
+                                        key={idx}
+                                        onClick={() => toggleParcelMark(staff.id, "additionalBalance", idx)}
+                                        title={isMarked ? "Verified (click to unmark)" : "Click to mark as verified"}
+                                        className={`px-1.5 py-0.5 rounded text-[11px] font-mono flex items-center gap-1 border transition-all duration-150 cursor-pointer select-none active:scale-95 ${
+                                          isMarked
+                                            ? "bg-emerald-600 text-white font-bold border-emerald-700 shadow-2xs hover:bg-emerald-700 ring-1 ring-emerald-400/50"
+                                            : "bg-teal-50 font-semibold text-teal-900 border-teal-200 hover:bg-teal-100 hover:border-teal-300"
+                                        }`}
                                       >
-                                        ×
-                                      </button>
-                                    </span>
-                                  ))
+                                        {isMarked && (
+                                          <span className="text-[10px] font-black text-emerald-200 leading-none shrink-0">✓</span>
+                                        )}
+                                        <span>{formatCurrency(p)}</span>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            removeValue(staff.id, "additionalBalance", idx);
+                                          }}
+                                          className={`font-bold ml-0.5 cursor-pointer text-xs leading-none ${
+                                            isMarked ? "text-emerald-200 hover:text-white" : "text-red-500 hover:text-red-700"
+                                          }`}
+                                        >
+                                          ×
+                                        </button>
+                                      </span>
+                                    );
+                                  })
                                 )}
                               </div>
                             </div>
@@ -1322,10 +1612,30 @@ export default function WinTicketsScanBalancingPage() {
                           <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-2 flex flex-col justify-between">
                             <div className="space-y-1.5">
                               <div className="flex items-center justify-between text-xs">
-                                <span className="font-bold text-slate-800">Tomorrow Balance Wins</span>
-                                <span className="font-mono font-bold text-purple-700 text-sm">
-                                  {formatCurrency(totals.todaySum)}
-                                </span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-bold text-slate-800">Tomorrow Balance Wins</span>
+                                  {verifiedTodayCount > 0 && (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                      {verifiedTodayCount}/{(staff.additionalTodayWins || []).length} verified
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  {verifiedTodayCount > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => clearParcelMarks(staff.id, "additionalToday")}
+                                      className="text-[10px] text-slate-400 hover:text-slate-700 underline cursor-pointer"
+                                      title="Reset marked items"
+                                    >
+                                      Reset
+                                    </button>
+                                  )}
+                                  <span className="font-mono font-bold text-purple-700 text-sm">
+                                    {formatCurrency(totals.todaySum)}
+                                  </span>
+                                </div>
                               </div>
 
                               <div className="flex items-center gap-1">
@@ -1357,21 +1667,38 @@ export default function WinTicketsScanBalancingPage() {
                                 {(staff.additionalTodayWins || []).length === 0 ? (
                                   <span className="text-[11px] text-slate-400 italic">No tomorrow wins</span>
                                 ) : (
-                                  staff.additionalTodayWins.map((p, idx) => (
-                                    <span
-                                      key={idx}
-                                      className="px-1.5 py-0.5 rounded bg-purple-50 text-[11px] font-mono font-semibold text-purple-900 flex items-center gap-1 border border-purple-200 hover:bg-purple-100 transition"
-                                    >
-                                      <span>{formatCurrency(p)}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => removeValue(staff.id, "additionalToday", idx)}
-                                        className="text-red-500 hover:text-red-700 font-bold ml-0.5 cursor-pointer"
+                                  staff.additionalTodayWins.map((p, idx) => {
+                                    const isMarked = (staff.verifiedAdditionalToday || []).includes(idx);
+                                    return (
+                                      <span
+                                        key={idx}
+                                        onClick={() => toggleParcelMark(staff.id, "additionalToday", idx)}
+                                        title={isMarked ? "Verified (click to unmark)" : "Click to mark as verified"}
+                                        className={`px-1.5 py-0.5 rounded text-[11px] font-mono flex items-center gap-1 border transition-all duration-150 cursor-pointer select-none active:scale-95 ${
+                                          isMarked
+                                            ? "bg-emerald-600 text-white font-bold border-emerald-700 shadow-2xs hover:bg-emerald-700 ring-1 ring-emerald-400/50"
+                                            : "bg-purple-50 font-semibold text-purple-900 border-purple-200 hover:bg-purple-100 hover:border-purple-300"
+                                        }`}
                                       >
-                                        ×
-                                      </button>
-                                    </span>
-                                  ))
+                                        {isMarked && (
+                                          <span className="text-[10px] font-black text-emerald-200 leading-none shrink-0">✓</span>
+                                        )}
+                                        <span>{formatCurrency(p)}</span>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            removeValue(staff.id, "additionalToday", idx);
+                                          }}
+                                          className={`font-bold ml-0.5 cursor-pointer text-xs leading-none ${
+                                            isMarked ? "text-emerald-200 hover:text-white" : "text-red-500 hover:text-red-700"
+                                          }`}
+                                        >
+                                          ×
+                                        </button>
+                                      </span>
+                                    );
+                                  })
                                 )}
                               </div>
                             </div>
