@@ -27,6 +27,7 @@ export type ReturnUploadedFileRecord = {
   downloadUrl: string;
   size: number; // bytes
   storagePath: string;
+  returnQty?: number;
   createdAt?: Timestamp;
 };
 
@@ -47,7 +48,8 @@ export async function saveReturnUploadedFile(
   file: File,
   gameId: string,
   gameName: string,
-  uploadDate: string
+  uploadDate: string,
+  returnQty?: number
 ): Promise<ReturnUploadedFileRecord> {
   // 1. Strict validation before ANY database/storage writes
   const validation = await validateFileData(file, "return");
@@ -69,7 +71,7 @@ export async function saveReturnUploadedFile(
     throw err;
   }
 
-  const meta = {
+  const meta: Record<string, any> = {
     fileName: file.name,
     gameId,
     gameName,
@@ -80,11 +82,23 @@ export async function saveReturnUploadedFile(
     createdAt: Timestamp.now(),
   };
 
+  if (typeof returnQty === "number" && !Number.isNaN(returnQty)) {
+    meta.returnQty = returnQty;
+  }
+
   try {
     const docRef = await addDoc(collection(db, COLLECTION), meta);
     return {
       id: docRef.id,
-      ...meta,
+      fileName: meta.fileName,
+      gameId: meta.gameId,
+      gameName: meta.gameName,
+      uploadDate: meta.uploadDate,
+      downloadUrl: meta.downloadUrl,
+      size: meta.size,
+      storagePath: meta.storagePath,
+      returnQty: meta.returnQty,
+      createdAt: meta.createdAt,
     };
   } catch (err) {
     // Atomic rollback: remove uploaded binary if document write fails
@@ -99,7 +113,7 @@ export async function saveReturnUploadedFile(
  * If any write fails, all previously uploaded files in this batch are rolled back.
  */
 export async function saveReturnUploadedFilesAtomic(
-  items: Array<{ file: File; gameId: string; gameName: string }>,
+  items: Array<{ file: File; gameId: string; gameName: string; returnQty?: number }>,
   uploadDate: string
 ): Promise<ReturnUploadedFileRecord[]> {
   // Pre-validate all files before ANY database/storage writes
@@ -117,7 +131,8 @@ export async function saveReturnUploadedFilesAtomic(
         item.file,
         item.gameId,
         item.gameName,
-        uploadDate
+        uploadDate,
+        item.returnQty
       );
       savedRecords.push(rec);
     }

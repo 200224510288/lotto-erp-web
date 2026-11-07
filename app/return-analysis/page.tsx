@@ -1,16 +1,39 @@
+// app/return-analysis/page.tsx
 "use client";
 
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import {
+  Printer,
+  Download,
+  FileText,
+  CheckCircle2,
+  AlertTriangle,
+  Settings,
+  ChevronDown,
+  ChevronUp,
+  RefreshCw,
+  Search,
+  Eye,
+  SlidersHorizontal,
+  Calendar,
+  Layers,
+  Sparkles,
+  Cloud,
+} from "lucide-react";
+
 import { listUploadedFilesByDate, listUploadedFilesByDateRange, UploadedFileRecord } from "../lib/uploadService";
 import { listReturnUploadedFilesByDate, listReturnUploadedFilesByDateRange, ReturnUploadedFileRecord } from "../lib/returnUploadService";
+import { isSpecialTenPercentLottery, getGameSafeReturnLimit } from "../lib/gameAutoSelect";
+import {
+  loadReturnThresholds,
+  saveReturnThresholds,
+  ReturnThresholdConfig,
+} from "../lib/returnThresholdConfig";
 
-/**
- * Allowed lottery types per weekday (ERP codes are treated as lottery types)
- */
 export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
   Monday: { LWM: "LMO", AKM: "AMO", SFM: "SFM", SBM: "SBM", KTM: "KPM", SPM: "SRM", VM: "DMO", SM: "JMO", WM: "WMO" },
   Tuesday: { LWA: "LWT", AKA: "ATU", SFA: "SFT", SBA: "BTU", KTT: "KPT", SPA: "SRT", VA: "DTU", SA: "JST", WA: "WTU" },
@@ -21,30 +44,20 @@ export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
   Sunday: { LWI: "LWS", AKI: "ASU", SFI: "SFU", SBI: "SSU", KTI: "KPS", SPI: "SRU", VI: "DSU", SI: "JSU", WI: "WSU" },
 };
 
+export const OFFICIAL_SINHALA_LOTTERIES = [
+  "අද කෝටිපති",
+  "කප්රුක",
+  "ලග්න",
+  "සසිරි",
+  "ශනිදා",
+  "සුපර් බෝල්",
+  "සුපිරි ධන සම්පත",
+  "ජය සම්පත",
+  "වාසි",
+];
+
 type SaleRow = { agentCode: string; qty: number; agentName?: string };
 type ReturnRow = { agentCode: string; qty: number };
-
-type ResultRow = {
-  rank: number;
-  agentCode: string;
-  agentName?: string;
-  lotteryType: string;
-  salesQty: number;
-  returnQty: number;
-  actualSales: number;
-  returnPct: number;
-};
-
-type TypeResult = {
-  lotteryType: string;
-  top: ResultRow[];
-  totals: {
-    uniqueAgents: number;
-    totalSalesQty: number;
-    totalReturnQty: number;
-    overallReturnPct: number; // totalReturn/totalSales*100
-  };
-};
 
 type AgentResultRow = {
   rank: number;
@@ -93,137 +106,319 @@ async function readSheet2D(file: File): Promise<(string | number | boolean | nul
   return XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as (string | number | boolean | null)[][];
 }
 
-/**
- * SALES heuristic:
- * - AgentCode usually in col 0
- * - AgentName usually in col 1
- * - Qty usually in col 4
- */
 function parseSales(data2d: (string | number | boolean | null)[][]): SaleRow[] {
   const rows: SaleRow[] = [];
   for (const r of data2d) {
     if (!r || r.length === 0) continue;
-
     const c0 = r[0];
     const c1 = r[1];
     const c4 = r[4];
-
     if (isLikelyHeaderCell(c0) || isLikelyHeaderCell(c1)) continue;
-
     const agentCode = normalizeAgentCode(c0);
     const agentName = String(c1 ?? "").trim();
     const qty = toNumber(c4);
-
     if (!agentCode) continue;
     if (!qty || qty <= 0) continue;
-
     const upper = agentCode.toUpperCase();
     if (upper === "NAME" || upper === "TOTAL") continue;
-
     rows.push({ agentCode, qty, agentName: agentName || undefined });
   }
   return rows;
 }
 
-/**
- * RETURNS heuristic:
- * - AgentCode usually in col 1
- * - Qty usually in col 8
- */
 function parseReturns(data2d: (string | number | boolean | null)[][]): ReturnRow[] {
   const rows: ReturnRow[] = [];
   for (const r of data2d) {
     if (!r || r.length === 0) continue;
-
     const c1 = r[1];
     const c8 = r[8];
-
     if (isLikelyHeaderCell(c1)) continue;
-
     const agentCode = normalizeAgentCode(c1);
     const qty = toNumber(c8);
-
     if (!agentCode) continue;
     if (!qty || qty <= 0) continue;
-
     const upper = agentCode.toUpperCase();
     if (upper === "NAME" || upper === "TOTAL") continue;
-
     rows.push({ agentCode, qty });
   }
   return rows;
 }
 
-function groupSum(rows: { agentCode: string; qty: number }[]) {
-  const m = new Map<string, number>();
-  for (const r of rows) m.set(r.agentCode, (m.get(r.agentCode) ?? 0) + r.qty);
-  return m;
+export const DISTRICT_SINHALA_MAP: Record<string, string> = {
+  KANDY: "මහනුවර",
+  COLOMBO: "කොළඹ",
+  GALLE: "ගාල්ල",
+  KURUNEGALA: "කුරුණෑගල",
+  MATARA: "මාතර",
+  GAMPAHA: "ගම්පහ",
+  KALUTARA: "කළුතර",
+  KEGALLE: "කෑගල්ල",
+  RATNAPURA: "රත්නපුර",
+  BADULLA: "බදුල්ල",
+  ANURADHAPURA: "අනුරාධපුර",
+  POLONNARUWA: "පොළොන්නරුව",
+  JAFFNA: "යාපනය",
+  TRINCOMALEE: "ත්‍රිකුණාමලය",
+  BATTICALOA: "මඩකලපුව",
+  AMPARA: "අම්පාර",
+  PUTTALAM: "පුත්තලම",
+  "NUWARA ELIYA": "නුවරඑළිය",
+  MONARAGALA: "මොනරාගල",
+  MATALE: "මාතලේ",
+  HAMBANTOTA: "හම්බන්තොට",
+  VAWUNIYA: "වවුනියාව",
+  MANNAR: "මන්නාරම",
+  KILINOCHCHI: "කිලිනොච්චිය",
+  MULLAITIVU: "මුලතිව්",
+};
+
+export function toSinhalaDistrict(dist: string): string {
+  if (!dist) return "මහනුවර";
+  const clean = dist.trim().toUpperCase();
+  return DISTRICT_SINHALA_MAP[clean] || dist;
 }
 
-function buildNameMap(rows: SaleRow[]) {
-  const m = new Map<string, string>();
-  for (const r of rows) if (r.agentName) m.set(r.agentCode, r.agentName);
-  return m;
+export function toSinhalaAgentName(name: string, code?: string): string {
+  if (!name && code === "030409") return "එස් ඩබ් ඕ සිල්වා";
+  const upper = (name || "").trim().toUpperCase();
+  if (upper.includes("OSMAN DE SILVA") || upper.includes("OSMAN") || code === "030409") {
+    return "එස් ඩබ් ඕ සිල්වා";
+  }
+  return name || "එස් ඩබ් ඕ සිල්වා";
 }
 
-function getWeekdayLabel(isoDate: string): keyof typeof ERP_GAME_MAP | null {
-  if (!isoDate) return null;
-  const [y, m, d] = isoDate.split("-").map(Number);
-  if (!y || !m || !d) return null;
-  const dt = new Date(y, m - 1, d);
-  const dayIdx = dt.getDay();
-  const map: Record<number, keyof typeof ERP_GAME_MAP> = {
-    0: "Sunday",
-    1: "Monday",
-    2: "Tuesday",
-    3: "Wednesday",
-    4: "Thursday",
-    5: "Friday",
-    6: "Saturday",
-  };
-  return map[dayIdx] ?? null;
-}
-
-function allowedLotteryTypesForDay(day: keyof typeof ERP_GAME_MAP | null): string[] {
-  if (!day) return [];
-  return Object.keys(ERP_GAME_MAP[day]);
+export function toSinhalaReason(rawReason: string): string {
+  if (!rawReason) return "";
+  const upper = rawReason.trim().toUpperCase();
+  if (upper.includes("RAIN") || upper.includes("ABSENT")) {
+    return "අයහපත් කාලගුණය (වැසි) / අලෙවි නියෝජිතයින් නොපැමිණීම";
+  }
+  return rawReason;
 }
 
 /**
- * Infer lottery type from filename by matching allowed type tokens.
+ * Detects which of the 9 official lotteries a return file or record corresponds to.
  */
-function inferLotteryTypeFromFilename(filename: string, allowedTypes: string[]): string | null {
-  const upper = filename.toUpperCase();
-  for (const t of allowedTypes) {
-    const re = new RegExp(`(^|[^A-Z0-9])${t}([^A-Z0-9]|$)`, "i");
-    if (re.test(upper)) return t;
+export function detectLotteryFromMetadata(meta: {
+  gameName?: string;
+  gameId?: string;
+  fileName?: string;
+  sheetData?: (string | number | boolean | null)[][];
+}): string | null {
+  const candidates: string[] = [];
+  if (meta.gameName) candidates.push(meta.gameName);
+  if (meta.gameId) candidates.push(meta.gameId);
+  if (meta.fileName) candidates.push(meta.fileName);
+
+  if (meta.sheetData && meta.sheetData.length > 0) {
+    const topRows = meta.sheetData.slice(0, 25);
+    for (const r of topRows) {
+      if (!r) continue;
+      const joined = r.map((c) => String(c ?? "").trim()).join(" ");
+      if (joined) candidates.push(joined);
+    }
   }
+
+  const combined = candidates.join(" ").toUpperCase();
+
+  // 1. Full name / Sinhala name check (ordered deliberately)
+  if (/JAYA[\s_\-]+SAMPATH/i.test(combined) || combined.includes("ජය සම්පත")) return "ජය සම්පත";
+  if (/SUPIRI[\s_\-]+DHANA|DHANA[\s_\-]+SAMPATH|DEVELOPMENT[\s_\-]+FORTUNE/i.test(combined) || combined.includes("සුපිරි ධන සම්පත")) return "සුපිරි ධන සම්පත";
+  if (/ADA[\s_\-]+KOTIP[AH]?THI|KOTIPATHI|KOTIPTHI/i.test(combined) || combined.includes("අද කෝටිපති")) return "අද කෝටිපති";
+  if (/KOTI[\s_\-]+KAPRUKA|KAPRUKA/i.test(combined) || combined.includes("කප්රුක")) return "කප්රුක";
+  if (/LAGNA[\s_\-]+WASANA|LAGNA[\s_\-]+VASANA|\bLAGNA\b/i.test(combined) || combined.includes("ලග්න")) return "ලග්න";
+  if (/SHANIDA[\s_\-]+FORTUNE|\bSHANIDA\b/i.test(combined) || combined.includes("ශනිදා")) return "ශනිදා";
+  if (/SUPER[\s_\-]*BALL/i.test(combined) || combined.includes("සුපර් බෝල්")) return "සුපර් බෝල්";
+  if (/SASIRI|\bJAYODA\b/i.test(combined) || combined.includes("සසිරි") || combined.includes("ජයෝදා")) return "සසිරි";
+  if (/DHANA[\s_\-]+NIDHANAYA|DHANA[\s_\-]+NIDANA|\bWASI\b|\bVASI\b/i.test(combined) || combined.includes("වාසි") || combined.includes("ධන නිධානය")) return "වාසි";
+
+  // 2. Exact word / code token matching (to avoid matching substring inside English words like COLOMBO)
+  const hasToken = (pattern: string) =>
+    new RegExp(`(?:^|[^A-Z])(${pattern})(?:[^A-Z]|$)`, "i").test(combined);
+
+  if (hasToken("AMO|ATU|AWD|ATH|AFR|ASA|ASU|AKM|AKA|AKW|AKT|AKF|AKS|AKI")) return "අද කෝටිපති";
+  if (hasToken("KPM|KPT|KPW|KTH|KPF|KSA|KPS|KTM|KTT|KTW|KTB|KTF|KTS|KTI")) return "කප්රුක";
+  if (hasToken("LMO|LWT|LWW|LTH|LWF|LSA|LWS|LWM|LWA|LWW|LWB|LWF|LWS|LWI")) return "ලග්න";
+  if (hasToken("SFM|SFT|SFH|SFR|SFS|SFU|SFA|SFW|SFF")) return "ශනිදා";
+  if (hasToken("SBM|BTU|SBW|SBT|SBF|SBS|SSU|SBA|SBI")) return "සුපර් බෝල්";
+  if (hasToken("SRM|SRT|SWD|STH|SRF|SRS|SRU|SPM|SPA|SPW|SPT|SPF|SPS|SPI")) return "සුපිරි ධන සම්පත";
+  if (hasToken("JS|JSM")) return "ජය සම්පත";
+  if (hasToken("JMO|JST|JSW|JTH|JFR|JSA|JSU|SM|SA|SW|ST|SF|SS|SI")) return "සසිරි";
+  if (hasToken("DMO|DTU|DWD|DTH|DFI|DSA|DSU|WMO|WTU|WWD|WTH|WFR|WSA|WSU|VM|VA|VW|VT|VF|VS|VI|WM|WA|WW|WT|WF|WS|WI")) return "වාසි";
+
   return null;
 }
 
-/** ---------- FIX EXCEL EXPORT: sanitize + unique sheet names ---------- */
-function sanitizeSheetName(name: string) {
-  const cleaned = name.replace(/[\\\/\?\*\[\]]/g, " ").trim();
-  const short = cleaned.slice(0, 31);
-  return short.length ? short : "Sheet";
-}
+export type DetailedReturnParseResult = {
+  lottery: string | null;
+  distributorCode: string | null;
+  distributorName: string | null;
+  district: string | null;
+  reason: string | null;
+  totalQty: number;
+  agentReturns: { agentCode: string; qty: number; agentName?: string }[];
+};
 
-function makeUniqueSheetName(base: string, used: Set<string>) {
-  const initial = sanitizeSheetName(base);
-  if (!used.has(initial)) {
-    used.add(initial);
-    return initial;
-  }
-  let i = 2;
-  while (true) {
-    const suffix = `_${i}`;
-    const truncated = initial.slice(0, Math.max(0, 31 - suffix.length)) + suffix;
-    if (!used.has(truncated)) {
-      used.add(truncated);
-      return truncated;
+export function parseReturnSheetDetailed(
+  data2d: (string | number | boolean | null)[][],
+  fileMeta?: { fileName?: string; gameId?: string; gameName?: string }
+): DetailedReturnParseResult {
+  const lottery = detectLotteryFromMetadata({
+    ...fileMeta,
+    sheetData: data2d,
+  });
+
+  let distributorCode: string | null = null;
+  let distributorName: string | null = null;
+  let district: string | null = null;
+  let reason: string | null = null;
+  let detectedTotal: number = 0;
+
+  // 1. Inspect Header Rows (first 25 rows) for distributor metadata
+  for (let r = 0; r < Math.min(25, data2d.length); r++) {
+    const row = data2d[r];
+    if (!row) continue;
+    const rowStr = row.map((c) => String(c ?? "").trim()).join(" ");
+
+    // Look for cells like ['CODE', ':', '030409']
+    for (let c = 0; c < row.length; c++) {
+      const cell = String(row[c] ?? "").trim().toUpperCase();
+      if ((cell === "CODE" || cell === "DEALER CODE" || cell === "DISTRIBUTOR CODE") && c + 1 < row.length) {
+        for (let k = c + 1; k < row.length; k++) {
+          const val = String(row[k] ?? "").trim().replace(/[^\d]/g, "");
+          if (val.length >= 4 && val.length <= 6) {
+            distributorCode = val.padStart(6, "0");
+            break;
+          }
+        }
+      }
+      if ((cell === "NAME" || cell === "DISTRIBUTOR") && c + 1 < row.length) {
+        for (let k = c + 1; k < row.length; k++) {
+          const val = String(row[k] ?? "").trim();
+          if (val && val !== ":" && val !== "-" && val.toUpperCase() !== "FROM") {
+            distributorName = val;
+            break;
+          }
+        }
+      }
+      if (cell === "DISTRICT" && c + 1 < row.length) {
+        for (let k = c + 1; k < row.length; k++) {
+          const val = String(row[k] ?? "").trim();
+          if (val && val !== ":" && val !== "-") {
+            district = val;
+            break;
+          }
+        }
+      }
+      if ((cell === "RESON" || cell === "REASON") && c + 1 < row.length) {
+        for (let k = c + 1; k < row.length; k++) {
+          const val = String(row[k] ?? "").trim();
+          if (val && val !== ":" && val !== "-") {
+            reason = val;
+            break;
+          }
+        }
+      }
     }
-    i++;
+
+    // Pattern matching e.g. "S.W OSMAN DE SILVA(030409) KANDY"
+    const nameCodeMatch = rowStr.match(/([A-Za-z\s.]+)\((\d{4,6})\)\s*([A-Za-z\s]+)?/i);
+    if (nameCodeMatch) {
+      if (!distributorName) distributorName = nameCodeMatch[1].trim();
+      if (!distributorCode) distributorCode = nameCodeMatch[2].padStart(6, "0");
+      if (nameCodeMatch[3] && !district) district = nameCodeMatch[3].trim();
+    }
   }
+
+  // 2. Identify Column Layout for Agents and Quantities
+  let headerRowIdx = -1;
+  let agentColIdx = 1;
+  let qtyColIdx = 8;
+  let nameColIdx = -1;
+
+  for (let r = 0; r < Math.min(30, data2d.length); r++) {
+    const row = data2d[r];
+    if (!row) continue;
+    let foundAgent = -1;
+    let foundQty = -1;
+    let foundName = -1;
+
+    for (let c = 0; c < row.length; c++) {
+      const txt = String(row[c] ?? "").trim().toUpperCase();
+      if (txt === "AGENT CODE" || txt === "AGENTCODE" || txt === "AGENT NO" || txt === "DEALER") {
+        foundAgent = c;
+      }
+      if (txt === "NAME" || txt === "AGENT NAME") {
+        foundName = c;
+      }
+      if (txt === "QTY" || txt.startsWith("QTY")) {
+        foundQty = c;
+      }
+    }
+
+    if (foundAgent !== -1 && foundQty !== -1) {
+      headerRowIdx = r;
+      agentColIdx = foundAgent;
+      qtyColIdx = foundQty;
+      if (foundName !== -1) nameColIdx = foundName;
+      break;
+    }
+  }
+
+  // 3. Extract Rows
+  const agentReturns: { agentCode: string; qty: number; agentName?: string }[] = [];
+  let calculatedSum = 0;
+  const startRow = headerRowIdx !== -1 ? headerRowIdx + 1 : 0;
+
+  for (let r = startRow; r < data2d.length; r++) {
+    const row = data2d[r];
+    if (!row || row.length === 0) continue;
+
+    // Detect Total Row
+    const isTotal = row.some((c) => String(c ?? "").trim().toUpperCase() === "TOTAL");
+    if (isTotal) {
+      for (let c = row.length - 1; c >= 0; c--) {
+        const n = toNumber(row[c]);
+        if (n > 0) {
+          detectedTotal = n;
+          break;
+        }
+      }
+      continue;
+    }
+
+    const cAgent = row[agentColIdx];
+    const cQty = row[qtyColIdx];
+    const cName = nameColIdx !== -1 ? row[nameColIdx] : undefined;
+
+    if (isLikelyHeaderCell(cAgent)) continue;
+
+    const agentCode = normalizeAgentCode(cAgent);
+    const qty = toNumber(cQty);
+
+    if (!agentCode || qty <= 0) continue;
+    const upper = agentCode.toUpperCase();
+    if (upper === "NAME" || upper === "TOTAL" || upper === "CODE") continue;
+
+    agentReturns.push({
+      agentCode,
+      qty,
+      agentName: cName ? String(cName).trim() : undefined,
+    });
+    calculatedSum += qty;
+  }
+
+  const finalTotal = detectedTotal > 0 ? detectedTotal : calculatedSum;
+
+  return {
+    lottery,
+    distributorCode,
+    distributorName,
+    district,
+    reason,
+    totalQty: finalTotal,
+    agentReturns,
+  };
 }
 
 function formatDateYYYYMMDD(d: Date): string {
@@ -237,7 +432,7 @@ function getWeekRange(dateStr: string): { start: string; end: string } {
   if (!dateStr) return { start: "", end: "" };
   const parts = dateStr.split("-").map(Number);
   const d = new Date(parts[0], parts[1] - 1, parts[2]);
-  const day = d.getDay(); // 0 is Sunday, 1 is Monday, etc.
+  const day = d.getDay();
   const diffToMonday = day === 0 ? -6 : 1 - day;
   const monday = new Date(d);
   monday.setDate(d.getDate() + diffToMonday);
@@ -253,13 +448,28 @@ function getMonthRange(dateStr: string): { start: string; end: string } {
   if (!dateStr) return { start: "", end: "" };
   const parts = dateStr.split("-").map(Number);
   const year = parts[0];
-  const monthIdx = parts[1] - 1; // 0-indexed
+  const monthIdx = parts[1] - 1;
   const firstDay = new Date(year, monthIdx, 1);
   const lastDay = new Date(year, monthIdx + 1, 0);
   return {
     start: formatDateYYYYMMDD(firstDay),
     end: formatDateYYYYMMDD(lastDay),
   };
+}
+
+function getSinhalaDateParts(isoDateStr: string) {
+  if (!isoDateStr) return { year: "2026", month: "....................", day: "............." };
+  const parts = isoDateStr.split("-");
+  if (parts.length < 3) return { year: "2026", month: "....................", day: "............." };
+  const y = parts[0];
+  const mNum = parseInt(parts[1], 10);
+  const d = parts[2];
+  const sinhalaMonths = [
+    "ජනවාරි", "පෙබරවාරි", "මාර්තු", "අප්‍රේල්", "මැයි", "ජූනි",
+    "ජූලි", "අගෝස්තු", "සැප්තැම්බර්", "ඔක්තෝබර්", "නොවැම්බර්", "දෙසැම්බර්"
+  ];
+  const month = sinhalaMonths[mNum - 1] || "....................";
+  return { year: y, month, day: d };
 }
 
 function downloadAllAsExcel(
@@ -274,7 +484,6 @@ function downloadAllAsExcel(
   }
 ) {
   const wb = XLSX.utils.book_new();
-
   const headerMeta = [
     ["Report Mode", meta.mode.toUpperCase()],
     ["Base Date", meta.date],
@@ -285,7 +494,6 @@ function downloadAllAsExcel(
     ["Overall Return %", Number(totals.overallReturnPct.toFixed(2))],
     [],
   ];
-
   const exportRows = rows.map((r) => ({
     Rank: r.rank,
     AgentCode: r.agentCode,
@@ -295,15 +503,12 @@ function downloadAllAsExcel(
     ActualSales: r.actualSales,
     ReturnPct: Number(r.returnPct.toFixed(2)),
   }));
-
   const ws = XLSX.utils.aoa_to_sheet(headerMeta);
   XLSX.utils.sheet_add_json(ws, exportRows, { origin: "A9" });
-
   XLSX.utils.book_append_sheet(wb, ws, "Agent Returns Summary");
   XLSX.writeFile(wb, filename);
 }
 
-/** ---------- PDF EXPORT (professional report) ---------- */
 function downloadAllAsPdf(
   filename: string,
   meta: { date: string; mode: string; dateRange: string },
@@ -316,36 +521,27 @@ function downloadAllAsPdf(
   }
 ) {
   const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
-
   const marginX = 14;
   let y = 18;
-
-  // Header (simple + professional)
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
   doc.text("Lottery Sales vs Returns Report", marginX, y);
   y += 8;
-
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
   doc.text(`Report Mode: ${meta.mode.toUpperCase()}    Range: ${meta.dateRange}`, marginX, y);
   y += 8;
-
-  // Overall summary
   doc.setDrawColor(220);
   doc.setFillColor(245, 246, 248);
   doc.roundedRect(marginX, y, 182, 18, 3, 3, "F");
-
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   doc.text("Overall Summary", marginX + 4, y + 6);
-
   doc.setFont("helvetica", "normal");
   doc.text(`Total Sales Qty: ${totals.totalSalesQty}`, marginX + 4, y + 12);
   doc.text(`Total Return Qty: ${totals.totalReturnQty}`, marginX + 70, y + 12);
   doc.text(`Overall Return %: ${totals.overallReturnPct.toFixed(2)}%`, marginX + 140, y + 12);
   y += 26;
-
   autoTable(doc, {
     startY: y,
     head: [["Rank", "Agent Code", "Agent Name", "Sales Qty", "Return Qty", "Actual Sales", "Return %"]],
@@ -359,11 +555,10 @@ function downloadAllAsPdf(
       `${r.returnPct.toFixed(2)}%`,
     ]),
     styles: { font: "helvetica", fontSize: 9, cellPadding: 2, overflow: "linebreak" },
-    headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: "bold" }, // slate-like
+    headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: "bold" },
     alternateRowStyles: { fillColor: [245, 246, 248] },
     margin: { left: marginX, right: marginX },
   });
-
   doc.save(filename);
 }
 
@@ -377,38 +572,106 @@ function todayKey(): string {
 
 export default function ReturnAnalysisPage() {
   const [selectedDate, setSelectedDate] = useState<string>(todayKey());
+  const [reportMode, setReportMode] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [returnThreshold, setReturnThreshold] = useState<number>(5);
+  const [isSavingThresholdCloud, setIsSavingThresholdCloud] = useState<boolean>(false);
+  const [thresholdCloudSuccess, setThresholdCloudSuccess] = useState<boolean>(false);
 
-  // MULTI UPLOAD
+  // Load cloud-saved threshold on mount & listen for updates
+  useEffect(() => {
+    let mounted = true;
+    loadReturnThresholds()
+      .then((cfg) => {
+        if (mounted && typeof cfg.defaultThreshold === "number" && cfg.defaultThreshold > 0) {
+          setReturnThreshold(cfg.defaultThreshold);
+        }
+      })
+      .catch((err) => console.warn("Failed loading cloud thresholds in return-analysis:", err));
+
+    const handleThresholdUpdate = (e: Event) => {
+      const detail = (e as CustomEvent<ReturnThresholdConfig>).detail;
+      if (detail && mounted && typeof detail.defaultThreshold === "number") {
+        setReturnThreshold(detail.defaultThreshold);
+      }
+    };
+    window.addEventListener("dlb-thresholds-updated", handleThresholdUpdate);
+
+    return () => {
+      mounted = false;
+      window.removeEventListener("dlb-thresholds-updated", handleThresholdUpdate);
+    };
+  }, []);
+
+  async function handleThresholdChange(val: number) {
+    setReturnThreshold(val);
+    if (val > 0) {
+      setIsSavingThresholdCloud(true);
+      setThresholdCloudSuccess(false);
+      try {
+        await saveReturnThresholds({ defaultThreshold: val });
+        setThresholdCloudSuccess(true);
+        setTimeout(() => setThresholdCloudSuccess(false), 2500);
+      } catch (err) {
+        console.warn("Could not save threshold to cloud:", err);
+      } finally {
+        setIsSavingThresholdCloud(false);
+      }
+    }
+  }
+
+  const [showOnlyExceeded, setShowOnlyExceeded] = useState<boolean>(false);
+  const [downloadFormat, setDownloadFormat] = useState<"excel" | "pdf">("excel");
+
+  // Multi uploads
   const [salesFiles, setSalesFiles] = useState<File[]>([]);
   const [returnFiles, setReturnFiles] = useState<File[]>([]);
 
-  // Download format
-  const [downloadFormat, setDownloadFormat] = useState<"excel" | "pdf">("excel");
-
-  // Parsed/grouped results
+  // Results & status
   const [allAgentResults, setAllAgentResults] = useState<AgentResultRow[]>([]);
+  const [excludedAgents, setExcludedAgents] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [isBusy, setIsBusy] = useState(false);
+  const [isBusy, setIsBusy] = useState<boolean>(false);
 
-  // DB files states
+  // Database files state
   const [dbErpFiles, setDbErpFiles] = useState<UploadedFileRecord[]>([]);
   const [dbReturnFiles, setDbReturnFiles] = useState<ReturnUploadedFileRecord[]>([]);
-  const [isLoadingDbFiles, setIsLoadingDbFiles] = useState(false);
-  const [isFetchingSaved, setIsFetchingSaved] = useState(false);
+  const [isLoadingDbFiles, setIsLoadingDbFiles] = useState<boolean>(false);
+  const [isFetchingSaved, setIsFetchingSaved] = useState<boolean>(false);
 
-  // User filter & exclusion states
-  const [reportMode, setReportMode] = useState<"daily" | "weekly" | "monthly">("daily");
-  const [returnThreshold, setReturnThreshold] = useState<number>(5);
-  const [showOnlyExceeded, setShowOnlyExceeded] = useState<boolean>(false);
-  const [excludedAgents, setExcludedAgents] = useState<Set<string>>(new Set());
+  // Active / Selected Agent for Letter Preview
+  const [selectedAgent, setSelectedAgent] = useState<AgentResultRow | null>(null);
+  const [isDownloadingLetter, setIsDownloadingLetter] = useState<boolean>(false);
+  const [showLetterSettings, setShowLetterSettings] = useState<boolean>(false);
 
-  const weekday = useMemo(() => getWeekdayLabel(selectedDate), [selectedDate]);
-  const allowedTypes = useMemo(() => allowedLotteryTypesForDay(weekday), [weekday]);
+  // Customizable Letter Metadata
+  const [letterAgentName, setLetterAgentName] = useState<string>("එස් ඩබ් ඕ සිල්වා");
+  const [letterAgentCode, setLetterAgentCode] = useState<string>("030409");
+  const [letterAddressLine1, setLetterAddressLine1] = useState<string>("අංක 204,");
+  const [letterAddressLine2, setLetterAddressLine2] = useState<string>("මධ්‍යම වෙළඳපොල,");
+  const [letterDistrict, setLetterDistrict] = useState<string>("මහනුවර");
+  const [letterOfficerName, setLetterOfficerName] = useState<string>("රුමේෂ් බණ්ඩාර");
+  const [letterReason, setLetterReason] = useState<string>("");
+  const [lotteryBookQtys, setLotteryBookQtys] = useState<Record<string, string>>({
+    "අද කෝටිපති": "",
+    "කප්රුක": "",
+    "ලග්න": "",
+    "සසිරි": "",
+    "ශනිදා": "",
+    "සුපර් බෝල්": "",
+    "සුපිරි ධන සම්පත": "",
+    "ජය සම්පත": "",
+    "වාසි": "",
+  });
 
-  function resetComputed() {
-    setAllAgentResults([]);
-    setExcludedAgents(new Set());
-  }
+  // State for fetched returns by lottery
+  const [lotteryReturnsByAgent, setLotteryReturnsByAgent] = useState<Record<string, Record<string, number>>>({});
+  const [dateLotteryTotals, setDateLotteryTotals] = useState<Record<string, number>>({});
+  const [isFetchingDateReturns, setIsFetchingDateReturns] = useState<boolean>(false);
+  const [returnsLoadedDate, setReturnsLoadedDate] = useState<string | null>(null);
+  const [letterViewTarget, setLetterViewTarget] = useState<"agent" | "office">("agent");
+  const [quantityUnit, setQuantityUnit] = useState<"tickets" | "books">("tickets");
+
+  const previewSheetRef = useRef<HTMLDivElement>(null);
 
   const activeDateRange = useMemo(() => {
     if (!selectedDate) return { start: "", end: "" };
@@ -421,15 +684,14 @@ export default function ReturnAnalysisPage() {
     }
   }, [selectedDate, reportMode]);
 
+  const sinhalaDate = useMemo(() => getSinhalaDateParts(selectedDate), [selectedDate]);
+
   const filteredResults = useMemo(() => {
     let list = allAgentResults.filter((r) => !excludedAgents.has(r.agentCode));
-
     if (showOnlyExceeded) {
       list = list.filter((r) => r.returnPct >= returnThreshold);
     }
-
     list.sort((a, b) => b.returnPct - a.returnPct);
-
     return list.map((r, idx) => ({
       ...r,
       rank: idx + 1,
@@ -439,14 +701,11 @@ export default function ReturnAnalysisPage() {
   const overallTotals = useMemo(() => {
     let totalSalesQty = 0;
     let totalReturnQty = 0;
-
     for (const r of filteredResults) {
       totalSalesQty += r.salesQty;
       totalReturnQty += r.returnQty;
     }
-
     const overallReturnPct = totalSalesQty > 0 ? (totalReturnQty / totalSalesQty) * 100 : 0;
-
     return {
       uniqueAgents: filteredResults.length,
       totalSalesQty,
@@ -454,6 +713,62 @@ export default function ReturnAnalysisPage() {
       overallReturnPct,
     };
   }, [filteredResults]);
+
+  // Helper to re-calculate letter table cells from state
+  function syncLetterQtys(
+    targetMode: "agent" | "office",
+    agentCode: string | null,
+    agentMap: Record<string, Record<string, number>>,
+    totalsMap: Record<string, number>,
+    unit: "tickets" | "books"
+  ) {
+    const source =
+      targetMode === "office" || !agentCode
+        ? totalsMap
+        : agentMap[agentCode] || {};
+
+    const newQtys: Record<string, string> = {};
+    for (const lot of OFFICIAL_SINHALA_LOTTERIES) {
+      const rawVal = source[lot];
+      if (rawVal !== undefined && rawVal > 0) {
+        if (unit === "books" && rawVal >= 100) {
+          newQtys[lot] = Math.round(rawVal / 100).toString();
+        } else {
+          newQtys[lot] = rawVal.toString();
+        }
+      } else {
+        newQtys[lot] = "";
+      }
+    }
+    setLotteryBookQtys(newQtys);
+  }
+
+  // When an agent is picked or filteredResults updates, auto-select the first high return agent
+  useEffect(() => {
+    if (filteredResults.length > 0 && !selectedAgent) {
+      const topAgent = filteredResults[0];
+      handleSelectAgent(topAgent);
+    }
+  }, [filteredResults, selectedAgent]);
+
+  function handleSelectAgent(agent: AgentResultRow) {
+    setSelectedAgent(agent);
+    setLetterViewTarget("agent");
+    setLetterAgentName(toSinhalaAgentName(agent.agentName || "එස් ඩබ් ඕ සිල්වා", agent.agentCode));
+    setLetterAgentCode(agent.agentCode || "030409");
+    syncLetterQtys("agent", agent.agentCode, lotteryReturnsByAgent, dateLotteryTotals, quantityUnit);
+  }
+
+  function handleSelectOfficeTotal() {
+    setLetterViewTarget("office");
+    syncLetterQtys("office", null, lotteryReturnsByAgent, dateLotteryTotals, quantityUnit);
+  }
+
+  function handleToggleUnit(unit: "tickets" | "books") {
+    setQuantityUnit(unit);
+    const activeCode = selectedAgent?.agentCode || letterAgentCode;
+    syncLetterQtys(letterViewTarget, activeCode, lotteryReturnsByAgent, dateLotteryTotals, unit);
+  }
 
   // Filter saved files so we only include days that have both ERP and Return uploads
   const { activeErpFiles, activeReturnFiles, activeDates } = useMemo(() => {
@@ -464,11 +779,9 @@ export default function ReturnAnalysisPage() {
         activeDates: new Set(selectedDate ? [selectedDate] : []),
       };
     }
-
     const erpDates = new Set(dbErpFiles.map((f) => f.uploadDate));
     const returnDates = new Set(dbReturnFiles.map((f) => f.uploadDate));
     const intersection = new Set([...erpDates].filter((d) => returnDates.has(d)));
-
     return {
       activeErpFiles: dbErpFiles.filter((f) => intersection.has(f.uploadDate)),
       activeReturnFiles: dbReturnFiles.filter((f) => intersection.has(f.uploadDate)),
@@ -476,21 +789,123 @@ export default function ReturnAnalysisPage() {
     };
   }, [dbErpFiles, dbReturnFiles, reportMode, selectedDate]);
 
-  // Fetch files in database for selected date range
+  async function processReturnFilesDetailed(
+    files: File[],
+    records?: ReturnUploadedFileRecord[]
+  ) {
+    const nextAgentMap: Record<string, Record<string, number>> = {};
+    const nextTotals: Record<string, number> = {};
+    let matchedDistributorCode: string | null = null;
+    let matchedDistributorName: string | null = null;
+    let matchedDistrict: string | null = null;
+    let matchedReason: string | null = null;
+
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const rec = records?.[i];
+      const d = await readSheet2D(f);
+      const parsed = parseReturnSheetDetailed(d, {
+        fileName: f.name,
+        gameId: rec?.gameId || (f as any).gameId,
+        gameName: rec?.gameName || (f as any).gameName,
+      });
+
+      const lot = parsed.lottery;
+      if (lot && OFFICIAL_SINHALA_LOTTERIES.includes(lot)) {
+        // Add to date totals
+        nextTotals[lot] = (nextTotals[lot] || 0) + parsed.totalQty;
+
+        // If file had a distributor code in the header
+        if (parsed.distributorCode) {
+          matchedDistributorCode = parsed.distributorCode;
+          if (!nextAgentMap[parsed.distributorCode]) {
+            nextAgentMap[parsed.distributorCode] = {};
+          }
+          nextAgentMap[parsed.distributorCode][lot] =
+            (nextAgentMap[parsed.distributorCode][lot] || 0) + parsed.totalQty;
+        }
+
+        if (parsed.distributorName) matchedDistributorName = parsed.distributorName;
+        if (parsed.district) matchedDistrict = parsed.district;
+        if (parsed.reason) matchedReason = parsed.reason;
+
+        // Add subagent rows
+        for (const row of parsed.agentReturns) {
+          if (!nextAgentMap[row.agentCode]) {
+            nextAgentMap[row.agentCode] = {};
+          }
+          nextAgentMap[row.agentCode][lot] =
+            (nextAgentMap[row.agentCode][lot] || 0) + row.qty;
+        }
+      }
+    }
+
+    setLotteryReturnsByAgent(nextAgentMap);
+    setDateLotteryTotals(nextTotals);
+
+    if (matchedDistributorName) {
+      setLetterAgentName(toSinhalaAgentName(matchedDistributorName, matchedDistributorCode || undefined));
+    }
+    if (matchedDistributorCode) {
+      setLetterAgentCode(matchedDistributorCode);
+    }
+    if (matchedDistrict) {
+      setLetterDistrict(toSinhalaDistrict(matchedDistrict));
+    }
+    if (matchedReason) {
+      setLetterReason(toSinhalaReason(matchedReason));
+    }
+
+    const currentAgent = selectedAgent?.agentCode || matchedDistributorCode || null;
+    syncLetterQtys(letterViewTarget, currentAgent, nextAgentMap, nextTotals, quantityUnit);
+
+    return { nextAgentMap, nextTotals };
+  }
+
+  async function fetchAndProcessReturnsForDate(
+    targetDate: string,
+    filesToFetch: ReturnUploadedFileRecord[]
+  ) {
+    if (!targetDate || filesToFetch.length === 0) return;
+    setIsFetchingDateReturns(true);
+    try {
+      const fetched: File[] = [];
+      for (const u of filesToFetch) {
+        if (!u.downloadUrl) continue;
+        const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
+        const res = await fetch(proxyUrl);
+        if (!res.ok) continue;
+        const blob = await res.blob();
+        const file = new File([blob], u.fileName, {
+          type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        });
+        (file as any).gameId = u.gameId;
+        (file as any).gameName = u.gameName;
+        fetched.push(file);
+      }
+      if (fetched.length > 0) {
+        setReturnFiles(fetched);
+        await processReturnFilesDetailed(fetched, filesToFetch);
+        setReturnsLoadedDate(targetDate);
+      }
+    } catch (err) {
+      console.error("Error fetching actual returns for date:", err);
+    } finally {
+      setIsFetchingDateReturns(false);
+    }
+  }
+
   useEffect(() => {
     if (!activeDateRange.start || !activeDateRange.end) {
       setDbErpFiles([]);
       setDbReturnFiles([]);
       return;
     }
-
     let isMounted = true;
     setIsLoadingDbFiles(true);
-
     const erpPromise = reportMode === "daily" 
       ? listUploadedFilesByDate(selectedDate) 
       : listUploadedFilesByDateRange(activeDateRange.start, activeDateRange.end);
-
     const retPromise = reportMode === "daily"
       ? listReturnUploadedFilesByDate(selectedDate)
       : listReturnUploadedFilesByDateRange(activeDateRange.start, activeDateRange.end);
@@ -501,6 +916,10 @@ export default function ReturnAnalysisPage() {
         setDbErpFiles(erpFiles);
         setDbReturnFiles(retFiles);
         setIsLoadingDbFiles(false);
+        // Automatically fetch and parse actual returns for the selected date!
+        if (retFiles && retFiles.length > 0) {
+          fetchAndProcessReturnsForDate(selectedDate, retFiles);
+        }
       })
       .catch((err) => {
         if (!isMounted) return;
@@ -516,7 +935,6 @@ export default function ReturnAnalysisPage() {
   async function runAnalysisForFiles(sFiles: File[], rFiles: File[]) {
     setError(null);
     setAllAgentResults([]);
-
     if (!selectedDate) return setError("Please select a date first.");
     if (sFiles.length === 0) return setError("Please upload at least one Sales file.");
 
@@ -529,11 +947,9 @@ export default function ReturnAnalysisPage() {
         const d = await readSheet2D(f);
         allSalesRows.push(...parseSales(d));
       }
-
       if (!allSalesRows.length) {
         throw new Error("No valid sales records parsed from the files.");
       }
-
       for (const f of rFiles) {
         const d = await readSheet2D(f);
         allReturnRows.push(...parseReturns(d));
@@ -558,7 +974,6 @@ export default function ReturnAnalysisPage() {
         if (salesQty <= 0) continue;
         const returnQty = returnSum.get(agentCode) ?? 0;
         const returnPct = (returnQty / salesQty) * 100;
-
         merged.push({
           rank: 0,
           agentCode,
@@ -572,7 +987,13 @@ export default function ReturnAnalysisPage() {
 
       merged.sort((a, b) => b.returnPct - a.returnPct);
       setAllAgentResults(merged);
-      setExcludedAgents(new Set()); // Reset exclusion on fresh run
+      setExcludedAgents(new Set());
+      if (rFiles.length > 0) {
+        await processReturnFilesDetailed(rFiles);
+      }
+      if (merged.length > 0) {
+        handleSelectAgent(merged[0]);
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to parse files.");
     } finally {
@@ -580,14 +1001,10 @@ export default function ReturnAnalysisPage() {
     }
   }
 
-  async function handleRun() {
-    await runAnalysisForFiles(salesFiles, returnFiles);
-  }
-
   async function handleLoadSavedAndRun() {
     setError(null);
-    resetComputed();
-
+    setAllAgentResults([]);
+    setExcludedAgents(new Set());
     if (!selectedDate) return setError("Please select a date first.");
     if (activeErpFiles.length === 0) {
       return setError(`No dates with both ERP and Return files found in the selected range.`);
@@ -626,7 +1043,6 @@ export default function ReturnAnalysisPage() {
 
       setSalesFiles(fetchedSales);
       setReturnFiles(fetchedReturns);
-
       await runAnalysisForFiles(fetchedSales, fetchedReturns);
     } catch (err: any) {
       setError(err?.message || "Error fetching saved files.");
@@ -636,20 +1052,50 @@ export default function ReturnAnalysisPage() {
     }
   }
 
-  function handleDownload() {
-    if (!filteredResults.length) return;
+  function handlePrintLetter() {
+    window.print();
+  }
 
+  async function handleDownloadLetterPdf() {
+    const el = previewSheetRef.current;
+    if (!el) return;
+    try {
+      setIsDownloadingLetter(true);
+      const html2canvas = (await import("html2canvas")).default;
+      const canvas = await html2canvas(el, {
+        scale: 2.5,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+      });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`DLB_Return_Notice_${letterAgentCode || "agent"}_${selectedDate}.pdf`);
+    } catch (err) {
+      console.error("PDF generation failed, launching print fallback:", err);
+      window.print();
+    } finally {
+      setIsDownloadingLetter(false);
+    }
+  }
+
+  function handleDownloadSummary() {
+    if (!filteredResults.length) return;
     const dateRangeStr =
       reportMode === "daily"
         ? selectedDate
         : `${activeDateRange.start} to ${activeDateRange.end}`;
-
     const meta = {
       date: selectedDate,
       mode: reportMode,
       dateRange: dateRangeStr,
     };
-
     if (downloadFormat === "excel") {
       downloadAllAsExcel(
         `agent_return_analysis_${selectedDate || "date"}.xlsx`,
@@ -668,380 +1114,1061 @@ export default function ReturnAnalysisPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="mx-auto max-w-6xl px-4 py-10">
-        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Lottery Sales vs Returns Analyzer</h1>
-            <p className="mt-2 text-sm text-slate-600">
-              Consolidated Agent Total Sales & Returns. View Daily, Weekly, or Monthly metrics, set return thresholds, and clean agent lists before exporting.
-            </p>
+    <div className="min-h-screen bg-slate-100 text-slate-900 pb-16 font-sans">
+      {/* Print Styles: isolates ONLY the letter document */}
+      <style jsx global>{`
+        @media print {
+          body * {
+            visibility: hidden !important;
+          }
+          #letter-preview-document,
+          #letter-preview-document * {
+            visibility: visible !important;
+          }
+          #letter-preview-document {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 16mm 18mm !important;
+            box-shadow: none !important;
+            border: none !important;
+            background: white !important;
+          }
+        }
+      `}</style>
+
+      {/* Top Navbar */}
+      <div className="w-full bg-white border-b border-slate-200 px-4 sm:px-8 py-3.5 shadow-2xs">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="p-2.5 rounded-2xl bg-purple-50 text-purple-700 border border-purple-200">
+              <FileText className="w-5 h-5" />
+            </span>
+            <div>
+              <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
+                Return Analysis & Official Notice Preview
+              </h1>
+              <p className="text-xs text-slate-500 font-medium">
+                Live A4 document preview of return notifications & agent analysis
+              </p>
+            </div>
           </div>
 
-          <div className="flex flex-col items-end gap-2 shrink-0">
-            {/* Primary Navigation Row */}
-            <div className="flex items-center gap-2">
-              <Link
-                href="/"
-                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-800 text-white text-xs font-medium shadow-xs transition"
-              >
-                Sales Page
-              </Link>
-              <Link
-                href="/returns"
-                className="px-3 py-1.5 rounded-lg bg-purple-700 hover:bg-purple-800 text-white text-xs font-medium shadow-xs transition"
-              >
-                Returns Page
-              </Link>
-            </div>
-
-            {/* Financial Balancing Row */}
-            <div className="flex items-center gap-2">
-              <Link
-                href="/daily-balance"
-                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition"
-              >
-                Balance Organizer
-              </Link>
-              <Link
-                href="/scan-balancing"
-                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs transition"
-              >
-                Scan Balancing
-              </Link>
-            </div>
+          {/* Quick Page Links */}
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <Link
+              href="/returns"
+              className="px-3 py-1.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold transition shadow-xs"
+            >
+              Returns Page
+            </Link>
+            <Link
+              href="/scan-balancing"
+              className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition shadow-xs"
+            >
+              Scan Balancing
+            </Link>
+            <Link
+              href="/daily-balance"
+              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition shadow-xs"
+            >
+              Daily Balance
+            </Link>
+            <Link
+              href="/"
+              className="px-3 py-1.5 rounded-xl bg-slate-700 hover:bg-slate-800 text-white font-bold transition shadow-xs"
+            >
+              Sales Page
+            </Link>
           </div>
         </div>
+      </div>
 
-        <div className="grid gap-6 lg:grid-cols-3">
-          {/* Controls */}
-          <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 self-start">
-            <h2 className="text-base font-semibold">Report Controls</h2>
+      {/* Main Two-Pane Split Layout */}
+      <div className="w-full px-4 sm:px-6 lg:px-8 py-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* =========================================================
+              LEFT SIDE: A4 DOCUMENT PREVIEW (OFFICIAL SINHALA LETTER)
+              ========================================================= */}
+          <div className="lg:col-span-5 xl:col-span-5 space-y-3.5 lg:sticky lg:top-4">
+            {/* Preview Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-xs">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-xs font-black text-slate-800 uppercase tracking-wide">
+                  {letterViewTarget === "office" ? "Office Total Return Notice" : "Agent Notice Preview"}
+                </span>
+                {letterViewTarget === "agent" && (
+                  <span className="px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 font-mono text-[11px] font-bold">
+                    {letterAgentCode}
+                  </span>
+                )}
+              </div>
 
-            {/* Report Mode Selection */}
-            <label className="mt-4 block text-sm font-medium text-slate-700">Report Period</label>
-            <div className="mt-2 grid grid-cols-3 gap-2 rounded-xl bg-slate-100 p-1">
-              {(["daily", "weekly", "monthly"] as const).map((mode) => (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {/* View Target Switcher */}
+                <div className="inline-flex rounded-xl bg-slate-100 p-0.5 border border-slate-200 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLetterViewTarget("agent");
+                      const activeCode = selectedAgent?.agentCode || letterAgentCode;
+                      syncLetterQtys("agent", activeCode, lotteryReturnsByAgent, dateLotteryTotals, quantityUnit);
+                    }}
+                    className={`px-2 py-1 rounded-lg font-bold transition ${
+                      letterViewTarget === "agent"
+                        ? "bg-white text-slate-900 shadow-2xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                    title="View return notice for selected agent"
+                  >
+                    Agent
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSelectOfficeTotal}
+                    className={`px-2 py-1 rounded-lg font-bold transition ${
+                      letterViewTarget === "office"
+                        ? "bg-white text-slate-900 shadow-2xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                    title="View total returns notice for entire office/date"
+                  >
+                    Office Total
+                  </button>
+                </div>
+
+                {/* Unit Toggle: Tickets vs Books */}
+                <div className="inline-flex rounded-xl bg-slate-100 p-0.5 border border-slate-200 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleUnit("tickets")}
+                    className={`px-2 py-1 rounded-lg font-bold transition ${
+                      quantityUnit === "tickets"
+                        ? "bg-purple-700 text-white shadow-2xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                    title="Show exact ticket count"
+                  >
+                    Tickets
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleUnit("books")}
+                    className={`px-2 py-1 rounded-lg font-bold transition ${
+                      quantityUnit === "books"
+                        ? "bg-purple-700 text-white shadow-2xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                    title="Show count in Books (÷ 100)"
+                  >
+                    Books (÷100)
+                  </button>
+                </div>
+
+                {/* Re-fetch Returns Button */}
                 <button
-                  key={mode}
                   type="button"
-                  onClick={() => {
-                    setReportMode(mode);
-                    resetComputed();
-                  }}
-                  className={`rounded-lg py-1.5 text-xs font-semibold transition ${
-                    reportMode === mode
-                      ? "bg-white text-slate-900 shadow-sm"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
+                  disabled={isFetchingDateReturns || dbReturnFiles.length === 0}
+                  onClick={() => fetchAndProcessReturnsForDate(selectedDate, dbReturnFiles)}
+                  className="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold transition"
+                  title="Re-fetch actual returns for this date from database"
                 >
-                  {mode.toUpperCase()}
+                  <RefreshCw className={`w-3.5 h-3.5 ${isFetchingDateReturns ? "animate-spin text-purple-600" : ""}`} />
                 </button>
-              ))}
+
+                <button
+                  type="button"
+                  onClick={() => setShowLetterSettings((prev) => !prev)}
+                  className={`p-2 rounded-xl border text-xs font-bold transition flex items-center gap-1 ${
+                    showLetterSettings
+                      ? "bg-blue-50 text-blue-700 border-blue-200"
+                      : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
+                  }`}
+                  title="Customize Letter Text & Fields"
+                >
+                  <Settings className="w-4 h-4" />
+                  <span className="hidden sm:inline">Fields</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handlePrintLetter}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5"
+                  title="Print official letter"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isDownloadingLetter}
+                  onClick={handleDownloadLetterPdf}
+                  className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5"
+                  title="Download letter as PDF"
+                >
+                  {isDownloadingLetter ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                  <span>PDF</span>
+                </button>
+              </div>
             </div>
 
-            {/* Anchor Date Input */}
-            <label className="mt-4 block text-sm font-medium text-slate-700">Anchor Date</label>
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => {
-                setSelectedDate(e.target.value);
-                resetComputed();
-              }}
-              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-400"
-            />
+            {/* Quick Letter Customizer Drawer */}
+            {showLetterSettings && (
+              <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4 space-y-3 text-xs animate-in fade-in duration-100 shadow-xs">
+                <div className="flex items-center justify-between pb-1 border-b border-blue-100">
+                  <span className="font-black text-blue-900 uppercase tracking-wide">
+                    Customize Notice Details
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowLetterSettings(false)}
+                    className="text-slate-400 hover:text-slate-700 font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
 
-            {/* Date Details Info Box */}
-            <div className="mt-3 rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-700 space-y-1">
-              <div>
-                <span className="font-semibold">Selected Range:</span>{" "}
-                {reportMode === "daily"
-                  ? selectedDate
-                  : `${activeDateRange.start} to ${activeDateRange.end}`}
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-600 block">Agent Name (Sinhala)</label>
+                    <input
+                      type="text"
+                      value={letterAgentName}
+                      onChange={(e) => setLetterAgentName(e.target.value)}
+                      className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-600 block">Agent Code</label>
+                    <input
+                      type="text"
+                      value={letterAgentCode}
+                      onChange={(e) => setLetterAgentCode(e.target.value)}
+                      className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-mono font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-600 block">Address Line 1</label>
+                    <input
+                      type="text"
+                      value={letterAddressLine1}
+                      onChange={(e) => setLetterAddressLine1(e.target.value)}
+                      className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-600 block">District / City</label>
+                    <input
+                      type="text"
+                      value={letterDistrict}
+                      onChange={(e) => setLetterDistrict(e.target.value)}
+                      className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-bold text-slate-600 block">Reason for Return (හේතුව)</label>
+                    <input
+                      type="text"
+                      value={letterReason}
+                      onChange={(e) => setLetterReason(e.target.value)}
+                      placeholder="e.g. අයහපත් කාලගුණය (වැසි) / අලෙවි නියෝජිතයින් නොපැමිණීම"
+                      className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-bold text-slate-600 block">Officer Name</label>
+                    <input
+                      type="text"
+                      value={letterOfficerName}
+                      onChange={(e) => setLetterOfficerName(e.target.value)}
+                      className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
+                    />
+                  </div>
+                </div>
               </div>
-              {reportMode === "daily" && weekday && (
+            )}
+
+            {/* Pristine A4 Document Sheet (Replicating User's Attached Screenshot) */}
+            <div className="overflow-x-auto rounded-3xl p-1 bg-slate-200/60 shadow-inner flex justify-center">
+              <div
+                ref={previewSheetRef}
+                id="letter-preview-document"
+                className="w-full max-w-[560px] bg-white rounded-sm shadow-2xl p-7 sm:p-9 text-slate-900 space-y-4 font-serif text-[12px] sm:text-[13px] leading-relaxed border border-slate-200"
+                style={{ minHeight: "760px" }}
+              >
+                {/* 1. Top Section: Address Blocks */}
+                <div className="flex justify-between items-start gap-4 pt-1">
+                  {/* Top Left: Recipient */}
+                  <div className="text-left space-y-0.5 leading-snug">
+                    <div className="font-normal">සභාපතිතුමා,</div>
+                    <div className="font-normal">සංවර්ධන ලොතරැයි මණ්ඩලය,</div>
+                    <div className="font-normal">කොළඹ 02.</div>
+                  </div>
+
+                  {/* Top Right: Agent Address */}
+                  <div className="text-right space-y-0.5 leading-snug">
+                    <div className="font-normal">{letterAgentName},</div>
+                    <div className="font-normal">{letterAddressLine1}</div>
+                    <div className="font-normal">{letterAddressLine2}</div>
+                    <div className="font-normal">{letterDistrict}.</div>
+                  </div>
+                </div>
+
+                {/* 2. Subject Line */}
+                <div className="text-center pt-3 pb-1">
+                  <h2 className="font-bold text-[13px] sm:text-[14px] underline inline-block tracking-normal">
+                    අනුමත ප්‍රතිශතය ඉක්මවා සිදුකරන ආපසු එවුම් (Return) සම්බන්ධව දැනුම් දීම.
+                  </h2>
+                </div>
+
+                {/* 3. Intro Sentence with Dynamic Year, Month, Day */}
+                <div className="text-justify leading-relaxed pt-1">
+                  <span>ඉහත නම සඳහන් </span>
+                  <span className="font-bold underline px-0.5">{letterDistrict}</span>
+                  <span> දිස්ත්‍රික්කයේ බෙදාහැරීමේ අලෙවි නියෝජිතයෙකු වන මාගේ </span>
+                  <span className="font-bold">{sinhalaDate.year}</span>
+                  <span> වර්ෂයේ </span>
+                  <span className="font-bold underline px-1">{sinhalaDate.month}</span>
+                  <span> මස </span>
+                  <span className="font-bold underline px-1">{sinhalaDate.day}</span>
+                  <span> දිනට ආපසු එවුම් ප්‍රමාණය පහත පරිදි වේ.</span>
+                </div>
+
+                {/* 4. Official 9-Lottery Table */}
+                <div className="pt-1">
+                  <table className="w-full border-collapse border border-slate-800 text-[12px] sm:text-[12.5px]">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-center font-bold">
+                        <th className="border-r border-slate-800 py-1.5 px-3 text-left w-[60%]">
+                          ලොතරැයි වර්ගය
+                        </th>
+                        <th className="py-1.5 px-3 text-center w-[40%]">
+                          ආපසු එවුම් ප්‍රමාණය (පොත්)
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {OFFICIAL_SINHALA_LOTTERIES.map((lottery, idx) => {
+                        const qty = lotteryBookQtys[lottery] ?? "";
+                        return (
+                          <tr key={lottery} className="border-b border-slate-800">
+                            <td className="border-r border-slate-800 py-1 px-3">
+                              <span className="inline-block w-4 font-mono text-[11px] text-slate-600">
+                                {idx + 1}
+                              </span>
+                              <span>{lottery}</span>
+                              {isSpecialTenPercentLottery(lottery) && (
+                                <span className="ml-1 text-[10px] font-bold text-amber-800">
+                                  (10% සීමාව)
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-0.5 px-2 text-center font-mono">
+                              <input
+                                type="text"
+                                value={qty}
+                                placeholder="—"
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setLotteryBookQtys((prev) => ({
+                                    ...prev,
+                                    [lottery]: val,
+                                  }));
+                                }}
+                                className="w-full text-center bg-transparent focus:bg-blue-50/50 rounded py-0.5 text-xs font-bold font-mono outline-none"
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 5. Reasons Section */}
+                <div className="space-y-2 pt-1 leading-relaxed">
+                  <div>ඒ සඳහා පහත සඳහන් හේතුන් බලපා ඇති බව තහවුරු කරමි.</div>
+                  {letterReason ? (
+                    <div className="text-slate-800 font-medium px-1 py-0.5 border-b border-dotted border-slate-600 min-h-[22px]">
+                      {letterReason}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="border-b border-dotted border-slate-400 h-4 w-full" />
+                      <div className="border-b border-dotted border-slate-400 h-4 w-full" />
+                    </>
+                  )}
+                  <div className="pt-1">
+                    ඉහත සඳහන් හේතුන් සලකා බලා මාගේ කොමිස් මුදල කපා නොහරින ලෙස ඉල්ලා සිටිමි.
+                  </div>
+                </div>
+
+                {/* 6. Agent Signature & Seal Block */}
+                <div className="flex justify-between items-end pt-3 text-[12px]">
+                  <div className="space-y-1">
+                    <div>
+                      <span>අත්සන </span>
+                      <span className="inline-block w-36 border-b border-dotted border-slate-600"></span>
+                    </div>
+                    <div>
+                      <span>නම </span>
+                      <span className="font-bold underline">{letterAgentName}</span>
+                      <span className="font-mono text-xs"> ({letterAgentCode})</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-xs text-slate-600 font-semibold">රබර් මුද්‍රාව</span>
+                  </div>
+                </div>
+
+                {/* Heavy Divider */}
+                <hr className="border-t-2 border-slate-900 my-2.5" />
+
+                {/* 7. Field Officer Recommendation */}
+                <div className="space-y-1 text-[11.5px] sm:text-[12px]">
+                  <div className="font-bold text-[12.5px]">ක්ෂේත්‍ර නිලධාරී නිර්දේශය</div>
+                  <div className="text-justify leading-relaxed">
+                    මෙම බෙදාහැරීමේ අලෙවි නියෝජිත මහතාගේ ඉහත සඳහන් දිනට අදාලව අනුමත ප්‍රතිශතය ඉක්මවා ආපසු එවුම් ඉහළ යාම පිලිබඳ ඉදිරිපත්කර ඇති හේතුන් සාධාරණ බව තහවුරු කරමි./ නොකරමි.
+                  </div>
+                  <div className="text-slate-700">කලාප කළමනාකරු / අලෙවි ප්‍රවර්ධන සහකාර</div>
+
+                  <div className="flex justify-between items-end pt-2">
+                    <div className="space-y-1">
+                      <div>
+                        <span>අත්සන </span>
+                        <span className="inline-block w-36 border-b border-dotted border-slate-600"></span>
+                      </div>
+                      <div>
+                        <span>නම: </span>
+                        <span className="font-bold">{letterOfficerName}</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs text-slate-600 font-semibold">රබර් මුද්‍රාව</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Heavy Divider */}
+                <hr className="border-t-2 border-slate-900 my-2.5" />
+
+                {/* 8. Management Approval */}
+                <div className="space-y-2 pt-0.5 text-[11.5px] sm:text-[12px]">
+                  <div>කොමිස් මුදල කපා හැරීම අත්හිටුවීම අනුමත කරමි/ නොකරමි.</div>
+                  <div className="border-b border-dotted border-slate-600 w-52 h-3"></div>
+                  <div className="text-slate-700">
+                    නියෝජ්‍ය සාමාන්‍යාධිකාරී (අලෙවි) / සහකාර සාමාන්‍යාධිකාරී (විකුණුම්)
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* =========================================================
+              RIGHT SIDE: REST COMPONENTS (CONTROLS, STATS & AGENTS TABLE)
+              ========================================================= */}
+          <div className="lg:col-span-7 xl:col-span-7 space-y-5">
+            {/* 1. Report Period & Configuration Card */}
+            <div className="rounded-3xl bg-white p-5 sm:p-6 border border-slate-200 shadow-sm space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
                 <div>
-                  <span className="font-semibold">Day:</span> {weekday}
+                  <h2 className="text-base sm:text-lg font-black text-slate-900">
+                    Analysis Controls & Thresholds
+                  </h2>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Set analysis timeframe and excess return limits
+                  </p>
+                </div>
+
+                {/* Mode Selector */}
+                <div className="inline-flex rounded-2xl bg-slate-100 p-1 border border-slate-200">
+                  {(["daily", "weekly", "monthly"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => {
+                        setReportMode(mode);
+                        setAllAgentResults([]);
+                        setExcludedAgents(new Set());
+                      }}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-xl transition ${
+                        reportMode === mode
+                          ? "bg-white text-slate-900 shadow-xs"
+                          : "text-slate-500 hover:text-slate-900"
+                      }`}
+                    >
+                      {mode.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Date Picker */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                    <Calendar className="w-4 h-4 text-purple-600" />
+                    Anchor Date
+                  </label>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => {
+                      setSelectedDate(e.target.value);
+                      setAllAgentResults([]);
+                      setExcludedAgents(new Set());
+                    }}
+                    className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3.5 py-2 text-sm font-mono font-bold text-slate-900 focus:outline-none focus:border-purple-600 shadow-2xs"
+                  />
+                  <div className="text-[11px] text-slate-500">
+                    Range: <span className="font-bold text-slate-700">{activeDateRange.start}</span> to{" "}
+                    <span className="font-bold text-slate-700">{activeDateRange.end}</span>
+                  </div>
+                </div>
+
+                {/* Threshold */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-rose-600" />
+                    Return Threshold (%)
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative flex items-center">
+                      <input
+                        type="number"
+                        min="0.1"
+                        max="100"
+                        step="0.5"
+                        value={returnThreshold}
+                        onChange={(e) => void handleThresholdChange(Number(e.target.value))}
+                        className="w-24 rounded-2xl border-2 border-slate-200 bg-white px-3 py-1.5 text-sm font-mono font-bold text-slate-900 focus:outline-none focus:border-rose-600 shadow-2xs pr-6"
+                      />
+                      <span className="absolute right-2 text-xs font-bold text-slate-500 pointer-events-none">%</span>
+                    </div>
+
+                    {/* Quick Presets */}
+                    <div className="flex items-center gap-1">
+                      {[5.0, 7.5, 10.0].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => void handleThresholdChange(preset)}
+                          className={`px-2 py-0.5 rounded text-[11px] font-bold border cursor-pointer transition-all ${
+                            returnThreshold === preset
+                              ? "bg-rose-600 text-white border-rose-600 shadow-2xs"
+                              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                          }`}
+                        >
+                          {preset}%
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Cloud Status Badge */}
+                    <div className="flex items-center">
+                      {isSavingThresholdCloud ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                          <RefreshCw className="w-3 h-3 animate-spin text-amber-600" />
+                          <span>Saving…</span>
+                        </span>
+                      ) : thresholdCloudSuccess ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span>Saved on Cloud ✓</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                          <Cloud className="w-3 h-3 text-slate-400" />
+                          <span>Cloud Synced</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-500 pt-0.5">
+                    <b>Statutory Limits:</b> Lagna, Super Ball &amp; Kapruka permit up to <b>10%</b>; other lotteries are limited to <b>5%</b>.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="showOnlyExceededCheck"
+                      checked={showOnlyExceeded}
+                      onChange={(e) => setShowOnlyExceeded(e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                    />
+                    <label
+                      htmlFor="showOnlyExceededCheck"
+                      className="text-xs text-slate-700 font-bold select-none cursor-pointer"
+                    >
+                      Show only agents exceeding {returnThreshold}%
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Database Auto-Analysis Box */}
+              <div className="rounded-2xl border border-purple-200 bg-purple-50/50 p-4 space-y-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-black text-purple-900 uppercase tracking-wide">
+                    Database Files ({reportMode.toUpperCase()})
+                  </span>
+                  <span className="text-[11px] text-purple-700 font-semibold">
+                    {activeDates.size} active matched days
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="bg-white rounded-xl p-2.5 border border-purple-100 flex justify-between items-center">
+                    <span className="text-slate-600">Sales Summary:</span>
+                    <span className="font-bold text-slate-900 font-mono">
+                      {dbErpFiles.length} files
+                    </span>
+                  </div>
+                  <div className="bg-white rounded-xl p-2.5 border border-purple-100 flex justify-between items-center">
+                    <span className="text-slate-600">Return Files:</span>
+                    <span className="font-bold text-slate-900 font-mono">
+                      {dbReturnFiles.length} files
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => fetchAndProcessReturnsForDate(selectedDate, dbReturnFiles)}
+                    disabled={isFetchingDateReturns || dbReturnFiles.length === 0}
+                    className="py-2.5 px-3.5 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-900 border border-purple-300 text-xs font-bold shadow-2xs transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {isFetchingDateReturns ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin text-purple-700" />
+                        <span>Fetching Returns…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4 text-purple-700" />
+                        <span>Fetch Returns ({dbReturnFiles.length} files)</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleLoadSavedAndRun}
+                    disabled={isBusy || activeErpFiles.length === 0}
+                    className="py-2.5 px-3.5 rounded-xl bg-purple-700 hover:bg-purple-800 disabled:opacity-50 text-white text-xs font-bold shadow-xs transition flex items-center justify-center gap-2"
+                  >
+                    {isFetchingSaved ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Running Analysis…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        <span>Full Sales vs Returns Analysis</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* 9 Official Lotteries Actual Returns Breakdown Card */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-2xs space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm sm:text-base font-black text-slate-900">
+                        Official 9 Lotteries Return Breakdown
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-lg bg-purple-50 text-purple-700 font-mono text-[11px] font-bold">
+                        {selectedDate}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Actual returns detected per lottery game for{" "}
+                      {letterViewTarget === "agent" && (selectedAgent?.agentCode || letterAgentCode)
+                        ? `agent ${selectedAgent?.agentCode || letterAgentCode}`
+                        : "entire office"}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLetterViewTarget("agent");
+                        const activeCode = selectedAgent?.agentCode || letterAgentCode;
+                        syncLetterQtys("agent", activeCode, lotteryReturnsByAgent, dateLotteryTotals, quantityUnit);
+                      }}
+                      className={`px-2.5 py-1 rounded-xl font-bold transition ${
+                        letterViewTarget === "agent"
+                          ? "bg-purple-700 text-white shadow-2xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      Agent View
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSelectOfficeTotal}
+                      className={`px-2.5 py-1 rounded-xl font-bold transition ${
+                        letterViewTarget === "office"
+                          ? "bg-purple-700 text-white shadow-2xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      Office Total
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  {OFFICIAL_SINHALA_LOTTERIES.map((lottery, idx) => {
+                    const activeAgentCode = selectedAgent?.agentCode || letterAgentCode;
+                    const agentVal = (activeAgentCode && lotteryReturnsByAgent[activeAgentCode]?.[lottery]) || 0;
+                    const totalVal = dateLotteryTotals[lottery] || 0;
+                    const displayVal = letterViewTarget === "office" ? totalVal : (agentVal > 0 ? agentVal : totalVal);
+                    const hasReturns = displayVal > 0;
+
+                    return (
+                      <div
+                        key={lottery}
+                        className={`p-3 rounded-2xl border transition ${
+                          hasReturns
+                            ? "bg-purple-50/70 border-purple-200 ring-1 ring-purple-300/40"
+                            : "bg-slate-50 border-slate-200"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between text-[11px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono text-slate-400 font-bold">#{idx + 1}</span>
+                            {isSpecialTenPercentLottery(lottery) ? (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                10% Limit
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-100 text-blue-900 border border-blue-200">
+                                5% Limit
+                              </span>
+                            )}
+                          </div>
+                          <span
+                            className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
+                              hasReturns
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-slate-200/80 text-slate-500"
+                            }`}
+                          >
+                            {hasReturns ? "Active Return" : "No Return"}
+                          </span>
+                        </div>
+                        <div className="font-bold text-slate-900 text-xs mt-1 truncate" title={lottery}>
+                          {lottery}
+                        </div>
+                        <div className="flex items-baseline justify-between mt-1">
+                          <span className="text-[11px] text-slate-500 font-medium">Returns:</span>
+                          <span
+                            className={`text-sm sm:text-base font-black font-mono ${
+                              hasReturns ? "text-purple-900" : "text-slate-400"
+                            }`}
+                          >
+                            {quantityUnit === "books" && displayVal >= 100
+                              ? `${Math.round(displayVal / 100)} books`
+                              : `${displayVal.toLocaleString()} tickets`}
+                          </span>
+                        </div>
+                        {letterViewTarget === "agent" && totalVal > 0 && totalVal !== agentVal && (
+                          <div className="text-[10px] text-slate-500 text-right pt-0.5 font-mono">
+                            (Office Total: {totalVal.toLocaleString()})
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Manual File Uploads Accordion */}
+              <div className="pt-2">
+                <details className="text-xs group">
+                  <summary className="font-bold text-slate-700 cursor-pointer hover:text-purple-700 flex items-center justify-between">
+                    <span>Or upload files manually…</span>
+                    <span className="text-[10px] text-slate-400 group-open:rotate-180 transition">▼</span>
+                  </summary>
+                  <div className="mt-3 p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-600 block">
+                        Sales Files (.xlsx)
+                      </label>
+                      <input
+                        type="file"
+                        accept=".xlsx,.xls"
+                        multiple
+                        onChange={(e) => {
+                          setSalesFiles(Array.from(e.target.files ?? []));
+                          setAllAgentResults([]);
+                        }}
+                        className="mt-1 block w-full text-xs"
+                      />
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        Selected: {salesFiles.length}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-600 block">
+                        Return Files (.xlsx)
+                      </label>
+                      <input
+                        type="file"
+                        accept=".xlsx,.xls"
+                        multiple
+                        onChange={(e) => {
+                          setReturnFiles(Array.from(e.target.files ?? []));
+                          setAllAgentResults([]);
+                        }}
+                        className="mt-1 block w-full text-xs"
+                      />
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        Selected: {returnFiles.length}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => runAnalysisForFiles(salesFiles, returnFiles)}
+                      disabled={isBusy || salesFiles.length === 0}
+                      className="w-full py-2 bg-slate-800 hover:bg-slate-900 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition"
+                    >
+                      {isBusy ? "Processing…" : "Analyze Uploaded Files"}
+                    </button>
+                  </div>
+                </details>
+              </div>
+
+              {error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 font-semibold">
+                  {error}
                 </div>
               )}
             </div>
 
-            {/* Return Threshold Controls */}
-            <label className="mt-4 block text-sm font-medium text-slate-700">Return Limit %</label>
-            <div className="mt-2 flex gap-3 items-center">
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                value={returnThreshold}
-                onChange={(e) => setReturnThreshold(Number(e.target.value))}
-                className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-slate-400"
-              />
-              <span className="text-xs text-slate-500">% return threshold</span>
-            </div>
-
-            <div className="mt-3 flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="showOnlyExceeded"
-                checked={showOnlyExceeded}
-                onChange={(e) => setShowOnlyExceeded(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
-              />
-              <label htmlFor="showOnlyExceeded" className="text-xs text-slate-700 font-medium select-none cursor-pointer">
-                Show only agents exceeding limit ({returnThreshold}%)
-              </label>
-            </div>
-
-            {/* Database Files Status */}
-            {selectedDate && (
-              <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 space-y-2">
-                <div className="font-semibold text-slate-800">
-                  Database Files ({reportMode === "daily" ? "Daily" : reportMode === "weekly" ? "Weekly" : "Monthly"})
-                </div>
-                {isLoadingDbFiles ? (
-                  <div className="text-slate-500 animate-pulse">Checking saved files...</div>
-                ) : (
-                  <>
-                    <div className="flex justify-between">
-                      <span>ERP Summary Files:</span>
-                      <span className="font-bold text-slate-900">
-                        {dbErpFiles.length} {reportMode !== "daily" && `(${activeErpFiles.length} active)`}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Return Files:</span>
-                      <span className="font-bold text-slate-900">
-                        {dbReturnFiles.length} {reportMode !== "daily" && `(${activeReturnFiles.length} active)`}
-                      </span>
-                    </div>
-                    {reportMode !== "daily" && (
-                      <div className="text-[10px] text-slate-500 mt-1 border-t border-slate-100 pt-1.5">
-                        * Only days with <b>both</b> Sales and Return uploads are active ({activeDates.size} days).
-                      </div>
-                    )}
-
-                    {activeErpFiles.length > 0 ? (
-                      <button
-                        onClick={handleLoadSavedAndRun}
-                        disabled={isBusy}
-                        className="mt-2 w-full rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 transition shadow-sm"
-                      >
-                        {isFetchingSaved ? "Downloading & Analyzing..." : "Load & Run Auto Analysis"}
-                      </button>
-                    ) : (
-                      <div className="mt-1 text-[11px] text-amber-600 font-medium">
-                        No active files to analyze for this range.
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-
-            <div className="my-5 border-t border-slate-200"></div>
-
-            {/* Manual Uploads Option */}
-            <h3 className="text-sm font-semibold text-slate-800">Or Manual Upload Files</h3>
-
-            <label className="mt-4 block text-sm font-medium text-slate-700">Sales files (.xlsx) — multiple</label>
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              multiple
-              onChange={(e) => {
-                setSalesFiles(Array.from(e.target.files ?? []));
-                resetComputed();
-              }}
-              className="mt-2 block w-full text-sm"
-            />
-            <div className="mt-1 text-xs text-slate-500">Uploaded: {salesFiles.length}</div>
-
-            <label className="mt-4 block text-sm font-medium text-slate-700">Return files (.xlsx) — multiple</label>
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              multiple
-              onChange={(e) => {
-                setReturnFiles(Array.from(e.target.files ?? []));
-                resetComputed();
-              }}
-              className="mt-2 block w-full text-sm"
-            />
-            <div className="mt-1 text-xs text-slate-500">Uploaded: {returnFiles.length}</div>
-
-            <button
-              onClick={handleRun}
-              disabled={isBusy}
-              className="mt-5 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-slate-800 disabled:opacity-60"
-            >
-              {isBusy ? "Processing..." : "Run Analysis"}
-            </button>
-
-            {error && (
-              <div className="mt-4 whitespace-pre-wrap rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {error}
-              </div>
-            )}
-
-            <div className="mt-5 rounded-xl bg-slate-100 px-3 py-3 text-xs text-slate-700">
-              <div className="font-semibold">Logic</div>
-              <div className="mt-1">Return% = (ReturnQty / SalesQty) × 100</div>
-              <div className="mt-1">ActualSales = SalesQty − ReturnQty</div>
-              <div className="mt-2 text-slate-600">
-                Consolidated agent totals combine sales and returns across all matched files in the selected time window.
-              </div>
-            </div>
-          </div>
-
-          {/* Results */}
-          <div className="lg:col-span-2 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-              <div>
-                <h2 className="text-base font-semibold">Agent Returns Report</h2>
-                <p className="mt-1 text-xs text-slate-600">
-                  Range: <span className="font-semibold">{activeDateRange.start} to {activeDateRange.end}</span>{" "}
-                  • Active Agents: <span className="font-semibold">{filteredResults.length}</span>
-                  {excludedAgents.size > 0 && (
-                    <span className="ml-2 text-slate-500">({excludedAgents.size} excluded)</span>
-                  )}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <select
-                  value={downloadFormat}
-                  onChange={(e) => setDownloadFormat(e.target.value as "excel" | "pdf")}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-slate-400"
-                  disabled={!filteredResults.length}
-                >
-                  <option value="excel">Excel Summary</option>
-                  <option value="pdf">PDF Report</option>
-                </select>
-
-                <button
-                  onClick={handleDownload}
-                  disabled={!filteredResults.length}
-                  className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-50 transition shadow-sm"
-                >
-                  Download
-                </button>
-              </div>
-            </div>
-
-            {excludedAgents.size > 0 && (
-              <div className="mt-3 flex items-center justify-between rounded-xl bg-indigo-50 border border-indigo-100 px-3 py-2 text-xs">
-                <span className="text-indigo-800">
-                  Some agents have been excluded from this report list.
+            {/* 2. Analysis Metrics & Summary KPI Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500 block">
+                  Active Agents
                 </span>
-                <button
-                  onClick={() => setExcludedAgents(new Set())}
-                  className="font-bold text-indigo-700 hover:text-indigo-900 underline"
-                >
-                  Restore all removed agents ({excludedAgents.size})
-                </button>
+                <div className="text-xl sm:text-2xl font-black font-mono text-slate-900 mt-1">
+                  {overallTotals.uniqueAgents}
+                </div>
               </div>
-            )}
 
-            {!filteredResults.length ? (
-              <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                {allAgentResults.length > 0 
-                  ? "No agents match the current filter criteria."
-                  : "Upload files or load from database to see the consolidated agent report."}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500 block">
+                  Total Sales Qty
+                </span>
+                <div className="text-xl sm:text-2xl font-black font-mono text-slate-900 mt-1">
+                  {overallTotals.totalSalesQty.toLocaleString()}
+                </div>
               </div>
-            ) : (
-              <div className="mt-4 space-y-6">
-                {/* Overall Summary Card */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                  <div>
-                    <div className="text-xs text-slate-500 font-medium">Total Agents</div>
-                    <div className="text-lg font-bold text-slate-950 mt-0.5">{overallTotals.uniqueAgents}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-500 font-medium">Total Sales Qty</div>
-                    <div className="text-lg font-bold text-slate-950 mt-0.5">{overallTotals.totalSalesQty.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-500 font-medium">Total Return Qty</div>
-                    <div className="text-lg font-bold text-slate-950 mt-0.5">{overallTotals.totalReturnQty.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-500 font-medium">Overall Return %</div>
-                    <div className="text-lg font-bold text-slate-950 mt-0.5">{overallTotals.overallReturnPct.toFixed(2)}%</div>
-                  </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500 block">
+                  Total Return Qty
+                </span>
+                <div className="text-xl sm:text-2xl font-black font-mono text-rose-700 mt-1">
+                  {overallTotals.totalReturnQty.toLocaleString()}
+                </div>
+              </div>
+
+              <div
+                className={`rounded-2xl border p-4 shadow-2xs ${
+                  overallTotals.overallReturnPct >= returnThreshold
+                    ? "border-rose-300 bg-rose-50/60"
+                    : "border-slate-200 bg-white"
+                }`}
+              >
+                <span
+                  className={`text-[11px] font-bold uppercase tracking-wide block ${
+                    overallTotals.overallReturnPct >= returnThreshold
+                      ? "text-rose-800"
+                      : "text-slate-500"
+                  }`}
+                >
+                  Overall Return %
+                </span>
+                <div
+                  className={`text-xl sm:text-2xl font-black font-mono mt-1 ${
+                    overallTotals.overallReturnPct >= returnThreshold
+                      ? "text-rose-900"
+                      : "text-slate-900"
+                  }`}
+                >
+                  {overallTotals.overallReturnPct.toFixed(2)}%
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Agents Table Card with Click-to-Preview Letter Action */}
+            <div className="rounded-3xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Agent Return Breakdown
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Click any agent to load and preview their official return letter on the left
+                  </p>
                 </div>
 
-                {/* Agents List Table */}
-                <div className="rounded-2xl border border-slate-200 overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead className="bg-slate-50 text-slate-700">
-                        <tr>
-                          <th className="px-3 py-2.5 text-left font-medium">Rank</th>
-                          <th className="px-3 py-2.5 text-left font-medium">Agent Code</th>
-                          <th className="px-3 py-2.5 text-left font-medium">Agent Name</th>
-                          <th className="px-3 py-2.5 text-right font-medium">Sales Qty</th>
-                          <th className="px-3 py-2.5 text-right font-medium">Return Qty</th>
-                          <th className="px-3 py-2.5 text-right font-medium">Actual Sales</th>
-                          <th className="px-3 py-2.5 text-right font-medium">Return %</th>
-                          <th className="px-3 py-2.5 text-center font-medium">Actions</th>
-                        </tr>
-                      </thead>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={downloadFormat}
+                    onChange={(e) => setDownloadFormat(e.target.value as "excel" | "pdf")}
+                    disabled={!filteredResults.length}
+                    className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-bold outline-none"
+                  >
+                    <option value="excel">Excel Summary</option>
+                    <option value="pdf">PDF Summary</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleDownloadSummary}
+                    disabled={!filteredResults.length}
+                    className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export</span>
+                  </button>
+                </div>
+              </div>
 
-                      <tbody>
-                        {filteredResults.map((r) => {
-                          const isExceeded = r.returnPct >= returnThreshold;
-                          return (
-                            <tr 
-                              key={r.agentCode} 
-                              className={`border-t border-slate-200 transition-colors ${
-                                isExceeded ? "bg-rose-50/50 hover:bg-rose-50" : "hover:bg-slate-50/80"
+              {excludedAgents.size > 0 && (
+                <div className="px-4 py-2 bg-indigo-50 border-b border-indigo-100 text-xs flex items-center justify-between text-indigo-800 font-medium">
+                  <span>{excludedAgents.size} agents currently excluded.</span>
+                  <button
+                    type="button"
+                    onClick={() => setExcludedAgents(new Set())}
+                    className="font-bold underline text-indigo-700 hover:text-indigo-900"
+                  >
+                    Restore all
+                  </button>
+                </div>
+              )}
+
+              {!filteredResults.length ? (
+                <div className="p-12 text-center text-xs text-slate-500 space-y-2">
+                  <FileText className="w-8 h-8 text-slate-300 mx-auto" />
+                  <div className="font-semibold text-slate-700">No agents to display</div>
+                  <p className="text-slate-400 max-w-sm mx-auto">
+                    {allAgentResults.length > 0
+                      ? `No agents exceed the ${returnThreshold}% return threshold. Uncheck "Show only agents exceeding limit" to view all.`
+                      : "Run analysis using saved database files or upload Excel summaries to begin."}
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px] tracking-wider">
+                        <th className="px-3.5 py-3">#</th>
+                        <th className="px-3.5 py-3">Code</th>
+                        <th className="px-3.5 py-3">Agent Name</th>
+                        <th className="px-3.5 py-3 text-right">Sales Qty</th>
+                        <th className="px-3.5 py-3 text-right">Return Qty</th>
+                        <th className="px-3.5 py-3 text-right">Return %</th>
+                        <th className="px-3.5 py-3 text-center">Preview Letter</th>
+                        <th className="px-3.5 py-3 text-center">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {filteredResults.map((r) => {
+                        const isExceeded = r.returnPct >= returnThreshold;
+                        const isSelected = selectedAgent?.agentCode === r.agentCode;
+
+                        return (
+                          <tr
+                            key={r.agentCode}
+                            onClick={() => handleSelectAgent(r)}
+                            className={`cursor-pointer transition-colors ${
+                              isSelected
+                                ? "bg-blue-50/90 font-bold ring-1 ring-blue-300 inset-0"
+                                : isExceeded
+                                ? "bg-rose-50/40 hover:bg-rose-50/80"
+                                : "hover:bg-slate-50"
+                            }`}
+                          >
+                            <td className="px-3.5 py-2.5 font-sans text-slate-400">{r.rank}</td>
+                            <td className="px-3.5 py-2.5 font-bold text-slate-900">{r.agentCode}</td>
+                            <td
+                              className="px-3.5 py-2.5 font-sans text-slate-800 font-semibold truncate max-w-[160px]"
+                              title={r.agentName}
+                            >
+                              {r.agentName || "—"}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-right text-slate-700">
+                              {r.salesQty.toLocaleString()}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-right font-bold text-rose-700">
+                              {r.returnQty.toLocaleString()}
+                            </td>
+                            <td
+                              className={`px-3.5 py-2.5 text-right font-black ${
+                                isExceeded ? "text-rose-600" : "text-slate-800"
                               }`}
                             >
-                              <td className="px-3 py-2.5">{r.rank}</td>
-                              <td className="px-3 py-2.5 font-mono text-xs font-semibold">{r.agentCode}</td>
-                              <td className="px-3 py-2.5 text-slate-700 truncate max-w-[150px]" title={r.agentName}>{r.agentName ?? "—"}</td>
-                              <td className="px-3 py-2.5 text-right">{r.salesQty.toLocaleString()}</td>
-                              <td className="px-3 py-2.5 text-right">{r.returnQty.toLocaleString()}</td>
-                              <td className="px-3 py-2.5 text-right">{r.actualSales.toLocaleString()}</td>
-                              <td className={`px-3 py-2.5 text-right font-bold ${
-                                isExceeded ? "text-rose-600" : "text-slate-900"
-                              }`}>
-                                {r.returnPct.toFixed(2)}%
-                              </td>
-                              <td className="px-3 py-2.5 text-center">
-                                <button
-                                  onClick={() => {
-                                    setExcludedAgents((prev) => {
-                                      const next = new Set(prev);
-                                      next.add(r.agentCode);
-                                      return next;
-                                    });
-                                  }}
-                                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-rose-600 transition"
-                                  title="Remove agent from list"
-                                >
-                                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 mx-auto">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                                  </svg>
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                              {r.returnPct.toFixed(2)}%
+                            </td>
+                            <td className="px-3.5 py-2.5 text-center font-sans">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSelectAgent(r);
+                                }}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 mx-auto ${
+                                  isSelected
+                                    ? "bg-blue-600 text-white shadow-2xs"
+                                    : "bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-800"
+                                }`}
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>{isSelected ? "Active" : "Preview"}</span>
+                              </button>
+                            </td>
+                            <td className="px-3.5 py-2.5 text-center font-sans">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExcludedAgents((prev) => {
+                                    const next = new Set(prev);
+                                    next.add(r.agentCode);
+                                    return next;
+                                  });
+                                }}
+                                className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                                title="Exclude agent"
+                              >
+                                ✕
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-
-                <div className="text-xs text-slate-500 space-y-1">
-                  <div>* Excluded agents are fully removed from both screen results and downloaded PDF/Excel reports.</div>
-                  <div>* Returns exceeding the {returnThreshold}% limit are marked in red for easy identification.</div>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>

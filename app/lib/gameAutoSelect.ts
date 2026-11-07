@@ -278,3 +278,159 @@ export function getActiveOfficialGames(customMap?: Record<string, Record<string,
 export const OFFICIAL_GAMES: { id: string; name: string }[] = (() => {
   return getActiveOfficialGames();
 })();
+
+/**
+ * Returns true if the lottery has a 10% safe return limit (Lagna, Super Ball, Kapruka).
+ * All other lotteries have a standard 5% safe return limit.
+ */
+export function isSpecialTenPercentLottery(gameOrName: string): boolean {
+  if (!gameOrName) return false;
+  const s = gameOrName.trim().toUpperCase();
+
+  // Sinhala names
+  if (
+    gameOrName.includes("ලග්න") ||
+    gameOrName.includes("සුපර් බෝල්") ||
+    gameOrName.includes("සුපර්බෝල්") ||
+    gameOrName.includes("කප්රුක")
+  ) {
+    return true;
+  }
+
+  // English names
+  if (
+    s.includes("LAGNA") ||
+    s.includes("LAGANA") ||
+    s.includes("SUPER BALL") ||
+    s.includes("SUPERBALL") ||
+    s.includes("SUPER-BALL") ||
+    s.includes("KAPRUKA") ||
+    s.includes("KAPURUKA")
+  ) {
+    return true;
+  }
+
+  // ERP & Official codes for Lagna
+  const lagnaCodes = ["LWM", "LWA", "LWW", "LWB", "LWF", "LWS", "LWI", "LMO", "LWT", "LTH", "LSA"];
+
+  // ERP & Official codes for Super Ball
+  const superBallCodes = ["SBM", "SBA", "SBW", "SBT", "SBF", "SBS", "SBI", "BTU", "SSU"];
+
+  // ERP & Official codes for Kapruka
+  const kaprukaCodes = [
+    "KTM", "KTT", "KTW", "KTB", "KTF", "KTS", "KTI",
+    "KPM", "KPT", "KPW", "KTH", "KPF", "KSA", "KPS",
+  ];
+
+  if (lagnaCodes.includes(s) || superBallCodes.includes(s) || kaprukaCodes.includes(s)) {
+    return true;
+  }
+
+  // Prefix matching
+  if (s.startsWith("LW") || s.startsWith("SB") || s.startsWith("KT") || s.startsWith("KP")) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Returns the statutory or cloud-configured safe return percentage limit for a given lottery:
+ * - Special lotteries (Lagna, Super Ball, and Kapruka): specialThreshold (default 10.0%)
+ * - Standard lotteries: defaultThreshold (default 5.0%)
+ */
+export function getGameSafeReturnLimit(
+  gameOrName: string,
+  thresholds?: {
+    defaultThreshold?: number;
+    specialThreshold?: number;
+    lotteryThresholds?: Record<string, number>;
+    overrides?: Record<string, number>;
+  }
+): number {
+  if (thresholds) {
+    const dict = { ...(thresholds.overrides || {}), ...(thresholds.lotteryThresholds || {}) };
+    const key = (gameOrName || "").trim().toUpperCase();
+    const baseKey = key.replace(/\.[^/.]+$/, "");
+    const lowerKey = (gameOrName || "").trim().toLowerCase();
+
+    // 1. Direct key match (e.g. "KAPURUKA", "KAPURUKA_MONDAY", "KPM", "kapruka")
+    if (typeof dict[key] === "number" && dict[key] > 0) return dict[key];
+    if (typeof dict[baseKey] === "number" && dict[baseKey] > 0) return dict[baseKey];
+    if (typeof dict[lowerKey] === "number" && dict[lowerKey] > 0) return dict[lowerKey];
+
+    // 2. Keyword matching for official lottery families with ALL ERP daily codes & Saturday codes
+    const families: Record<string, string[]> = {
+      kapruka: [
+        "KAPRUKA", "KAPURUKA", "KOTI KAPRUKA", "කප්රුක",
+        "KP", "KT", "KPM", "KPT", "KPW", "KTH", "KPF", "KSA", "KPS",
+        "KTM", "KTT", "KTW", "KTB", "KTF", "KTS", "KTI",
+      ],
+      lagna_wasana: [
+        "LAGNA", "LAGANA", "LAGNA WASANA", "ලග්න",
+        "LW", "LWM", "LWA", "LWW", "LWB", "LWF", "LWS", "LWI",
+        "LMO", "LWT", "LTH", "LSA",
+      ],
+      super_ball: [
+        "SUPER BALL", "SUPERBALL", "සුපර් බෝල්",
+        "SB", "SBM", "SBA", "SBW", "SBT", "SBF", "SBS", "SBI",
+        "BTU", "SSU",
+      ],
+      ada_kotipathi: [
+        "ADA KOTIPATHI", "අද කෝටිපති",
+        "AK", "AMO", "AKM", "AKA", "AKW", "AKT", "AKF", "AKS", "AKI",
+        "ATU", "AWD", "ATH", "AFR", "ASA", "ASU",
+      ],
+      shanida: [
+        "SHANIDA", "ශනිදා",
+        "SF", "SFM", "SFA", "SFW", "SFT", "SFF", "SFS", "SFI",
+        "SFH", "SFR", "SFU",
+      ],
+      sasiri: [
+        "SASIRI", "JAYODA", "සසිරි",
+        "SM", "SA", "SW", "ST", "SF", "SS", "SI",
+        "JMO", "JST", "JSW", "JTH", "JFR", "JSA", "JSU",
+      ],
+      supiri_dhana: [
+        "SUPIRI DHANA", "DEVELOPMENT FORTUNE", "සුපිරි ධන සම්පත",
+        "SP", "SR", "SPM", "SPA", "SPW", "SPT", "SPF", "SPS", "SPI",
+        "SRM", "SRT", "SWD", "STH", "SRF", "SRS", "SRU",
+      ],
+      jaya_sampatha: [
+        "JAYA SAMPATHA", "DHANA NIDHANAYA", "ජය සම්පත",
+        "V", "VM", "VA", "VW", "VT", "VF", "VS", "VI",
+        "DMO", "DTU", "DWD", "DTH", "DFI", "DSA", "DSU",
+      ],
+      wasi: [
+        "WASI", "WAASI", "වාසි",
+        "W", "WM", "WA", "WW", "WT", "WF", "WS", "WI",
+        "WMO", "WTU", "WWD", "WTH", "WFR", "WSA", "WSU",
+      ],
+    };
+
+    for (const [lotteryId, aliases] of Object.entries(families)) {
+      if (typeof dict[lotteryId] === "number" && dict[lotteryId] > 0) {
+        for (const alias of aliases) {
+          if (
+            key === alias ||
+            baseKey === alias ||
+            (alias.length >= 3 && (key.includes(alias) || baseKey.includes(alias))) ||
+            gameOrName.includes(alias)
+          ) {
+            return dict[lotteryId];
+          }
+        }
+      }
+    }
+
+    if (isSpecialTenPercentLottery(gameOrName)) {
+      return typeof thresholds.specialThreshold === "number" && thresholds.specialThreshold > 0
+        ? thresholds.specialThreshold
+        : 10.0;
+    }
+    return typeof thresholds.defaultThreshold === "number" && thresholds.defaultThreshold > 0
+      ? thresholds.defaultThreshold
+      : 5.0;
+  }
+  return isSpecialTenPercentLottery(gameOrName) ? 10.0 : 5.0;
+}
