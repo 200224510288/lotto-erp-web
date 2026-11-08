@@ -23,6 +23,9 @@ import {
   Layers,
   Sparkles,
   Cloud,
+  Check,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 
 import { listUploadedFilesByDate, listUploadedFilesByDateRange, UploadedFileRecord } from "../lib/uploadService";
@@ -789,7 +792,16 @@ export default function ReturnAnalysisPage() {
   const [letterViewTarget, setLetterViewTarget] = useState<"agent" | "office">("agent");
   const [quantityUnit, setQuantityUnit] = useState<"tickets" | "books">("tickets");
 
+  // 2 Previews State: 1. Notice Letter (District Distributor Total) | 2. Agent Return Proof Annexure
+  const [activePreviewTab, setActivePreviewTab] = useState<"notice" | "proof">("notice");
+  const [proofSelectedAgents, setProofSelectedAgents] = useState<Set<string>>(new Set());
+  const [printBundle, setPrintBundle] = useState<boolean>(false);
+  const [annexureTitle, setAnnexureTitle] = useState<string>(
+    "අනුමත 5% සීමාව ඉක්මවා ආපසු එවුම් සිදුකළ අලෙවි නියෝජිතයන්ගේ සාක්ෂි ලේඛනය"
+  );
+
   const previewSheetRef = useRef<HTMLDivElement>(null);
+  const proofSheetRef = useRef<HTMLDivElement>(null);
 
   const activeDateRange = useMemo(() => {
     if (!selectedDate) return { start: "", end: "" };
@@ -832,6 +844,45 @@ export default function ReturnAnalysisPage() {
     };
   }, [filteredResults]);
 
+  // Proof Annexure: compute list of checked agents and their totals
+  const proofListRows = useMemo(() => {
+    return allAgentResults
+      .filter((r) => proofSelectedAgents.has(r.agentCode))
+      .sort((a, b) => b.returnPct - a.returnPct)
+      .map((r, idx) => ({
+        ...r,
+        rank: idx + 1,
+      }));
+  }, [allAgentResults, proofSelectedAgents]);
+
+  const proofTotals = useMemo(() => {
+    let sales = 0;
+    let returns = 0;
+    for (const r of proofListRows) {
+      sales += r.salesQty;
+      returns += r.returnQty;
+    }
+    const pct = sales > 0 ? (returns / sales) * 100 : 0;
+    return {
+      count: proofListRows.length,
+      sales,
+      returns,
+      returnPct: pct,
+    };
+  }, [proofListRows]);
+
+  // Auto-initialize Proof selection with all agents exceeding return threshold (> 5%)
+  useEffect(() => {
+    if (allAgentResults.length > 0) {
+      const highReturns = new Set(
+        allAgentResults
+          .filter((r) => r.returnPct >= returnThreshold)
+          .map((r) => r.agentCode)
+      );
+      setProofSelectedAgents(highReturns);
+    }
+  }, [allAgentResults, returnThreshold]);
+
   // Helper to sync letter table cells from totalsMap (strictly in returned books)
   function syncLetterQtys(totalsMap: Record<string, number>) {
     const newQtys: Record<string, string> = {};
@@ -846,24 +897,36 @@ export default function ReturnAnalysisPage() {
     setLotteryBookQtys(newQtys);
   }
 
-  // When an agent is picked or filteredResults updates, auto-select the first high return agent
-  useEffect(() => {
-    if (filteredResults.length > 0 && !selectedAgent) {
-      const topAgent = filteredResults[0];
-      handleSelectAgent(topAgent);
-    }
-  }, [filteredResults, selectedAgent]);
-
+  // Selecting an agent row toggles proof inclusion and highlights the row, WITHOUT mutating the District Notice!
   function handleSelectAgent(agent: AgentResultRow) {
     setSelectedAgent(agent);
-    setLetterAgentName(toSinhalaAgentName(agent.agentName || "එස් ඩබ් ඕ සිල්වා", agent.agentCode));
-    setLetterAgentCode(agent.agentCode || "030409");
-    const agentMap = lotteryReturnsByAgent[agent.agentCode];
-    if (agentMap && Object.values(agentMap).some((v) => v > 0)) {
-      syncLetterQtys(agentMap);
-    } else if (Object.values(dateLotteryTotals).some((v) => v > 0)) {
-      syncLetterQtys(dateLotteryTotals);
-    }
+    handleToggleProofAgent(agent.agentCode);
+  }
+
+  function handleToggleProofAgent(agentCode: string) {
+    setProofSelectedAgents((prev) => {
+      const next = new Set(prev);
+      if (next.has(agentCode)) {
+        next.delete(agentCode);
+      } else {
+        next.add(agentCode);
+      }
+      return next;
+    });
+  }
+
+  function handleSelectAllProofAgents() {
+    setProofSelectedAgents(new Set(filteredResults.map((r) => r.agentCode)));
+  }
+
+  function handleSelectExceededProofAgents() {
+    setProofSelectedAgents(
+      new Set(allAgentResults.filter((r) => r.returnPct >= returnThreshold).map((r) => r.agentCode))
+    );
+  }
+
+  function handleClearProofAgents() {
+    setProofSelectedAgents(new Set());
   }
 
   function handleSelectOfficeTotal() {
@@ -1130,7 +1193,7 @@ export default function ReturnAnalysisPage() {
         await processReturnFilesDetailed(rFiles);
       }
       if (merged.length > 0) {
-        handleSelectAgent(merged[0]);
+        setSelectedAgent(merged[0]);
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to parse files.");
@@ -1190,12 +1253,23 @@ export default function ReturnAnalysisPage() {
     }
   }
 
-  function handlePrintLetter() {
-    window.print();
+  function handlePrintActive() {
+    setPrintBundle(false);
+    setTimeout(() => {
+      window.print();
+    }, 50);
   }
 
-  async function handleDownloadLetterPdf() {
-    const el = previewSheetRef.current;
+  function handlePrintBoth() {
+    setPrintBundle(true);
+    setTimeout(() => {
+      window.print();
+      setPrintBundle(false);
+    }, 100);
+  }
+
+  async function handleDownloadActivePdf() {
+    const el = activePreviewTab === "notice" ? previewSheetRef.current : proofSheetRef.current;
     if (!el) return;
     try {
       setIsDownloadingLetter(true);
@@ -1214,9 +1288,54 @@ export default function ReturnAnalysisPage() {
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
       pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`DLB_Return_Notice_${letterAgentCode || "agent"}_${selectedDate}.pdf`);
+      const filename =
+        activePreviewTab === "notice"
+          ? `DLB_Return_Notice_${letterAgentCode || "030409"}_${selectedDate}.pdf`
+          : `DLB_Agent_Proof_Annexure_${letterAgentCode || "030409"}_${selectedDate}.pdf`;
+      pdf.save(filename);
     } catch (err) {
       console.error("PDF generation failed, launching print fallback:", err);
+      window.print();
+    } finally {
+      setIsDownloadingLetter(false);
+    }
+  }
+
+  async function handleDownloadBundlePdf() {
+    const elNotice = previewSheetRef.current;
+    const elProof = proofSheetRef.current;
+    if (!elNotice || !elProof) return handleDownloadActivePdf();
+    try {
+      setIsDownloadingLetter(true);
+      const html2canvas = (await import("html2canvas")).default;
+      const canvasNotice = await html2canvas(elNotice, {
+        scale: 2.5,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+      });
+      const canvasProof = await html2canvas(elProof, {
+        scale: 2.5,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+      });
+
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const noticeHeight = (canvasNotice.height * pdfWidth) / canvasNotice.width;
+      pdf.addImage(canvasNotice.toDataURL("image/png"), "PNG", 0, 0, pdfWidth, noticeHeight);
+
+      pdf.addPage();
+      const proofHeight = (canvasProof.height * pdfWidth) / canvasProof.width;
+      pdf.addImage(canvasProof.toDataURL("image/png"), "PNG", 0, 0, pdfWidth, proofHeight);
+
+      pdf.save(`DLB_Notice_and_Proof_Bundle_${letterAgentCode || "030409"}_${selectedDate}.pdf`);
+    } catch (err) {
+      console.error("Bundle PDF generation failed:", err);
       window.print();
     } finally {
       setIsDownloadingLetter(false);
@@ -1253,27 +1372,30 @@ export default function ReturnAnalysisPage() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 pb-16 font-sans">
-      {/* Print Styles: isolates ONLY the letter document */}
+      {/* Print Styles: isolates preview documents and supports multi-page bundle printing */}
       <style jsx global>{`
         @media print {
           body * {
             visibility: hidden !important;
           }
-          #letter-preview-document,
-          #letter-preview-document * {
+          .printable-preview-doc,
+          .printable-preview-doc * {
             visibility: visible !important;
           }
-          #letter-preview-document {
-            position: absolute !important;
+          .printable-preview-doc {
+            display: block !important;
+            position: relative !important;
             left: 0 !important;
             top: 0 !important;
             width: 100% !important;
             max-width: 100% !important;
-            margin: 0 !important;
-            padding: 16mm 18mm !important;
+            margin: 0 auto !important;
+            padding: 12mm 15mm !important;
             box-shadow: none !important;
             border: none !important;
             background: white !important;
+            page-break-after: always !important;
+            break-after: page !important;
           }
         }
       `}</style>
@@ -1329,15 +1451,53 @@ export default function ReturnAnalysisPage() {
       <div className="w-full px-4 sm:px-6 lg:px-8 py-6">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* =========================================================
-              LEFT SIDE: A4 DOCUMENT PREVIEW (OFFICIAL SINHALA LETTER)
+              LEFT SIDE: A4 DOCUMENT PREVIEWS (1. NOTICE LETTER & 2. AGENT PROOF ANNEXURE)
               ========================================================= */}
           <div className="lg:col-span-5 xl:col-span-5 space-y-3.5 lg:sticky lg:top-4">
+            {/* 2 Previews Switcher Tabs */}
+            <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-white border border-slate-200 shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setActivePreviewTab("notice")}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition flex items-center justify-center gap-2 ${
+                  activePreviewTab === "notice"
+                    ? "bg-purple-700 text-white shadow-xs"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                <span>1. Notice Letter (District Total)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActivePreviewTab("proof")}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition flex items-center justify-center gap-2 ${
+                  activePreviewTab === "proof"
+                    ? "bg-rose-700 text-white shadow-xs"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                }`}
+              >
+                <CheckSquare className="w-4 h-4" />
+                <span>2. Agent Proof Annexure</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                    activePreviewTab === "proof"
+                      ? "bg-white text-rose-800"
+                      : "bg-rose-100 text-rose-800"
+                  }`}
+                >
+                  {proofSelectedAgents.size}
+                </span>
+              </button>
+            </div>
+
             {/* Preview Toolbar */}
             <div className="flex flex-wrap items-center justify-between gap-2 bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-xs">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className={`h-2.5 w-2.5 rounded-full animate-pulse ${activePreviewTab === "notice" ? "bg-purple-600" : "bg-rose-600"}`} />
                 <span className="text-xs font-black text-slate-800 uppercase tracking-wide">
-                  Return Notice Letter Preview
+                  {activePreviewTab === "notice" ? "District Notice Preview" : "Agent Proof Annexure"}
                 </span>
                 <span className="px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 font-mono text-[11px] font-bold">
                   {letterAgentCode || "030409"}
@@ -1376,9 +1536,9 @@ export default function ReturnAnalysisPage() {
 
                 <button
                   type="button"
-                  onClick={handlePrintLetter}
-                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5"
-                  title="Print official letter"
+                  onClick={handlePrintActive}
+                  className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-black text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5"
+                  title={`Print ${activePreviewTab === "notice" ? "Notice Letter" : "Proof Annexure"}`}
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span>Print</span>
@@ -1387,9 +1547,9 @@ export default function ReturnAnalysisPage() {
                 <button
                   type="button"
                   disabled={isDownloadingLetter}
-                  onClick={handleDownloadLetterPdf}
+                  onClick={handleDownloadActivePdf}
                   className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5"
-                  title="Download letter as PDF"
+                  title={`Download ${activePreviewTab === "notice" ? "Notice Letter" : "Proof Annexure"} as PDF`}
                 >
                   {isDownloadingLetter ? (
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -1397,6 +1557,16 @@ export default function ReturnAnalysisPage() {
                     <Download className="w-3.5 h-3.5" />
                   )}
                   <span>PDF</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handlePrintBoth}
+                  className="px-3 py-1.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5"
+                  title="Print both Notice Letter and Proof Annexure as a multi-page bundle"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Bundle</span>
                 </button>
               </div>
             </div>
@@ -1406,7 +1576,7 @@ export default function ReturnAnalysisPage() {
               <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4 space-y-3 text-xs animate-in fade-in duration-100 shadow-xs">
                 <div className="flex items-center justify-between pb-1 border-b border-blue-100">
                   <span className="font-black text-blue-900 uppercase tracking-wide">
-                    Customize Notice Details
+                    {activePreviewTab === "notice" ? "Customize Notice Details" : "Customize Proof Annexure Details"}
                   </span>
                   <button
                     type="button"
@@ -1419,7 +1589,7 @@ export default function ReturnAnalysisPage() {
 
                 <div className="grid grid-cols-2 gap-2.5">
                   <div>
-                    <label className="text-[10px] font-bold text-slate-600 block">Agent Name (Sinhala)</label>
+                    <label className="text-[10px] font-bold text-slate-600 block">District Distributor (නම)</label>
                     <input
                       type="text"
                       value={letterAgentName}
@@ -1428,7 +1598,7 @@ export default function ReturnAnalysisPage() {
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold text-slate-600 block">Agent Code</label>
+                    <label className="text-[10px] font-bold text-slate-600 block">Distributor Code (අංකය)</label>
                     <input
                       type="text"
                       value={letterAgentCode}
@@ -1454,17 +1624,7 @@ export default function ReturnAnalysisPage() {
                       className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
                     />
                   </div>
-                  <div className="col-span-2">
-                    <label className="text-[10px] font-bold text-slate-600 block">Reason for Return (හේතුව)</label>
-                    <input
-                      type="text"
-                      value={letterReason}
-                      onChange={(e) => setLetterReason(e.target.value)}
-                      placeholder="e.g. අයහපත් කාලගුණය (වැසි) / අලෙවි නියෝජිතයින් නොපැමිණීම"
-                      className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
-                    />
-                  </div>
-                  <div className="col-span-2">
+                  <div>
                     <label className="text-[10px] font-bold text-slate-600 block">Officer Name</label>
                     <input
                       type="text"
@@ -1473,16 +1633,41 @@ export default function ReturnAnalysisPage() {
                       className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
                     />
                   </div>
+                  {activePreviewTab === "notice" ? (
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 block">Reason for Return (හේතුව)</label>
+                      <input
+                        type="text"
+                        value={letterReason}
+                        onChange={(e) => setLetterReason(e.target.value)}
+                        placeholder="e.g. අයහපත් කාලගුණය (වැසි) / අලෙවි නියෝජිතයින් නොපැමිණීම"
+                        className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 block">Annexure Title</label>
+                      <input
+                        type="text"
+                        value={annexureTitle}
+                        onChange={(e) => setAnnexureTitle(e.target.value)}
+                        className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
-            {/* Pristine A4 Document Sheet (Replicating User's Attached Screenshot) */}
-            <div className="overflow-x-auto rounded-3xl p-1 bg-slate-200/60 shadow-inner flex justify-center">
+            {/* Pristine A4 Document Sheets Container */}
+            <div className="overflow-x-auto rounded-3xl p-1 bg-slate-200/60 shadow-inner flex flex-col items-center gap-6">
+              {/* Sheet 1: Official District Distributor Return Notice Letter */}
               <div
                 ref={previewSheetRef}
                 id="letter-preview-document"
-                className="w-full max-w-[560px] bg-white rounded-sm shadow-2xl p-7 sm:p-9 text-slate-900 space-y-4 font-serif text-[12px] sm:text-[13px] leading-relaxed border border-slate-200"
+                className={`w-full max-w-[560px] bg-white rounded-sm shadow-2xl p-7 sm:p-9 text-slate-900 space-y-4 font-serif text-[12px] sm:text-[13px] leading-relaxed border border-slate-200 ${
+                  activePreviewTab === "notice" || printBundle ? "block printable-preview-doc" : "hidden"
+                }`}
                 style={{ minHeight: "760px" }}
               >
                 {/* 1. Top Section: Address Blocks */}
@@ -1642,6 +1827,154 @@ export default function ReturnAnalysisPage() {
                   <div className="border-b border-dotted border-slate-600 w-52 h-3"></div>
                   <div className="text-slate-700">
                     නියෝජ්‍ය සාමාන්‍යාධිකාරී (අලෙවි) / සහකාර සාමාන්‍යාධිකාරී (විකුණුම්)
+                  </div>
+                </div>
+              </div>
+
+              {/* Sheet 2: Agent Return Proof Annexure (Evidence Document) */}
+              <div
+                ref={proofSheetRef}
+                id="proof-preview-document"
+                className={`w-full max-w-[560px] bg-white rounded-sm shadow-2xl p-7 sm:p-9 text-slate-900 space-y-3.5 font-serif text-[11.5px] sm:text-[12px] leading-relaxed border border-slate-200 ${
+                  activePreviewTab === "proof" || printBundle ? "block printable-preview-doc" : "hidden"
+                }`}
+                style={{ minHeight: "760px" }}
+              >
+                {/* Header */}
+                <div className="flex justify-between items-start gap-4 pb-2 border-b border-slate-800">
+                  <div className="text-left space-y-0.5 leading-snug">
+                    <div className="font-bold text-slate-900 text-xs">සංවර්ධන ලොතරැයි මණ්ඩලය (DLB)</div>
+                    <div className="text-slate-600 font-sans text-[10.5px]">Development Lotteries Board</div>
+                    <div className="inline-block mt-1 px-2 py-0.5 rounded bg-rose-100 text-rose-900 font-bold font-sans text-[10px] tracking-wide border border-rose-200">
+                      සාක්ෂි අනුබද්ධය • ANNEXURE 01
+                    </div>
+                  </div>
+                  <div className="text-right space-y-0.5 leading-snug">
+                    <div className="font-bold text-slate-900">{letterAgentName}</div>
+                    <div className="font-mono text-[11px] text-slate-700">නියෝජිත අංකය: {letterAgentCode}</div>
+                    <div className="text-slate-600">{letterDistrict} දිස්ත්‍රික්කය</div>
+                    <div className="font-mono text-slate-600 text-[10.5px]">දිනය: {selectedDate}</div>
+                  </div>
+                </div>
+
+                {/* Title */}
+                <div className="text-center pt-1 pb-1">
+                  <h2 className="font-bold text-[13px] sm:text-[13.5px] underline inline-block tracking-tight text-slate-900">
+                    {annexureTitle}
+                  </h2>
+                  <div className="text-[10.5px] text-slate-500 font-sans mt-0.5">
+                    (සාක්ෂි ලේඛනය: {returnThreshold}% සීමාව ඉක්මවා ආපසු එවුම් සිදුකළ අලෙවි නියෝජිතයන්ගේ විස්තරය)
+                  </div>
+                </div>
+
+                {/* Summary Metric Bar */}
+                <div className="grid grid-cols-4 gap-2 text-center py-2 px-2 bg-slate-50 rounded-xl border border-slate-300">
+                  <div>
+                    <div className="text-[10px] text-slate-500 font-sans font-bold">නියෝජිතයින් ගණන</div>
+                    <div className="font-black text-slate-900 font-mono text-sm">{proofTotals.count}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-slate-500 font-sans font-bold">මුළු විකිණුම්</div>
+                    <div className="font-black text-slate-900 font-mono text-sm">{proofTotals.sales.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-slate-500 font-sans font-bold">මුළු ආපසු (Returns)</div>
+                    <div className="font-black text-rose-700 font-mono text-sm">{proofTotals.returns.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-slate-500 font-sans font-bold">ආපසු ප්‍රතිශතය</div>
+                    <div className="font-black text-rose-700 font-mono text-sm">{proofTotals.returnPct.toFixed(2)}%</div>
+                  </div>
+                </div>
+
+                {/* Table of Ticked Agents */}
+                <div className="pt-1">
+                  {proofListRows.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-slate-500 bg-slate-50 rounded border border-slate-200">
+                      <AlertTriangle className="w-6 h-6 text-amber-500 mx-auto mb-2" />
+                      <div className="font-bold text-slate-700">සාක්ෂි ලේඛනයට නියෝජිතයින් තෝරා නොමැත</div>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        කරුණාකර දකුණු පස ඇති වගුවෙන් නියෝජිතයින් ඉදිරියේ ඇති checkbox ලකුණු කරන්න (Tick agents to include).
+                      </p>
+                    </div>
+                  ) : (
+                    <table className="w-full border-collapse border border-slate-800 text-[11px] sm:text-[11.5px]">
+                      <thead>
+                        <tr className="border-b border-slate-800 bg-slate-100 text-center font-bold text-slate-900">
+                          <th className="border-r border-slate-800 py-1.5 px-1.5 w-[7%]">#</th>
+                          <th className="border-r border-slate-800 py-1.5 px-2 text-left w-[18%]">නියෝජිත අංකය</th>
+                          <th className="border-r border-slate-800 py-1.5 px-2 text-left w-[33%]">නියෝජිත නම</th>
+                          <th className="border-r border-slate-800 py-1.5 px-2 text-right w-[14%]">විකිණුම්</th>
+                          <th className="border-r border-slate-800 py-1.5 px-2 text-right w-[14%]">ආපසු</th>
+                          <th className="border-r border-slate-800 py-1.5 px-2 text-right w-[14%]">ප්‍රතිශතය %</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-300 font-mono">
+                        {proofListRows.map((r) => {
+                          const isOver = r.returnPct >= returnThreshold;
+                          return (
+                            <tr key={r.agentCode} className={isOver ? "bg-rose-50/40" : ""}>
+                              <td className="border-r border-slate-800 py-1 px-1.5 text-center text-slate-500">
+                                {r.rank}
+                              </td>
+                              <td className="border-r border-slate-800 py-1 px-2 font-bold text-slate-900">
+                                {r.agentCode}
+                              </td>
+                              <td
+                                className="border-r border-slate-800 py-1 px-2 font-sans font-medium text-slate-800 truncate max-w-[130px] text-left"
+                                title={r.agentName}
+                              >
+                                {r.agentName || "—"}
+                              </td>
+                              <td className="border-r border-slate-800 py-1 px-2 text-right text-slate-700">
+                                {r.salesQty.toLocaleString()}
+                              </td>
+                              <td className="border-r border-slate-800 py-1 px-2 text-right font-bold text-rose-800">
+                                {r.returnQty.toLocaleString()}
+                              </td>
+                              <td className="border-r border-slate-800 py-1 px-2 text-right font-black text-rose-700">
+                                {r.returnPct.toFixed(2)}%
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-slate-800 font-bold bg-slate-100 text-slate-900 font-mono text-[11px]">
+                          <td colSpan={3} className="border-r border-slate-800 py-1.5 px-2 text-right font-sans">
+                            මුළු එකතුව (Total):
+                          </td>
+                          <td className="border-r border-slate-800 py-1.5 px-2 text-right">
+                            {proofTotals.sales.toLocaleString()}
+                          </td>
+                          <td className="border-r border-slate-800 py-1.5 px-2 text-right text-rose-800 font-black">
+                            {proofTotals.returns.toLocaleString()}
+                          </td>
+                          <td className="py-1.5 px-2 text-right text-rose-800 font-black">
+                            {proofTotals.returnPct.toFixed(2)}%
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  )}
+                </div>
+
+                {/* Verification Sign-off */}
+                <div className="pt-2 text-[11px] sm:text-[11.5px] leading-relaxed space-y-4">
+                  <div className="text-justify text-slate-800">
+                    ඉහත දැක්වෙන්නේ මාගේ බෙදාහැරීමේ ප්‍රදේශයේ අදාළ දිනට අනුමත {returnThreshold}% සීමාව ඉක්මවා ආපසු එවුම් (Return) සිදුකළ අලෙවි නියෝජිතයින්ගේ සත්‍ය තොරතුරු බවට සහතික කරමි. මෙම තොරතුරු නිල ලිපියට සාක්ෂි අනුබද්ධයක් (Proof Attachment) ලෙස ඉදිරිපත් කරමි.
+                  </div>
+                  <div className="flex justify-between items-end pt-3">
+                    <div className="text-center space-y-1">
+                      <div className="border-b border-dotted border-slate-700 w-44 mx-auto" />
+                      <div className="font-bold text-slate-900">දිස්ත්‍රික් බෙදාහැරීමේ අලෙවි නියෝජිත</div>
+                      <div className="text-[10px] text-slate-500 font-mono">({letterAgentName} - {letterAgentCode})</div>
+                    </div>
+                    <div className="text-center space-y-1">
+                      <div className="border-b border-dotted border-slate-700 w-44 mx-auto" />
+                      <div className="font-bold text-slate-900">DLB විකුණුම් අංශයේ සටහන</div>
+                      <div className="text-[10px] text-slate-500">සහකාර සාමාන්‍යාධිකාරී (විකුණුම්)</div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1978,15 +2311,15 @@ export default function ReturnAnalysisPage() {
               </div>
             </div>
 
-            {/* 3. Agents Table Card with Click-to-Preview Letter Action */}
+            {/* 3. Agents Table Card with Tick List for Proof Annexure Selection */}
             <div className="rounded-3xl bg-white border border-slate-200 shadow-sm overflow-hidden">
               <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-base font-black text-slate-900">
-                    Agent Return Breakdown
+                    Agent Return Breakdown & Proof Selection
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Click any agent to load and preview their official return letter on the left
+                    Tick agents below to include in the official Proof Annexure (Attachment)
                   </p>
                 </div>
 
@@ -2012,9 +2345,59 @@ export default function ReturnAnalysisPage() {
                 </div>
               </div>
 
+              {/* Sleek Quick Proof Selection Toolbar */}
+              <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">Proof List:</span>
+                  <button
+                    type="button"
+                    onClick={handleSelectExceededProofAgents}
+                    className="px-2.5 py-1 rounded-lg font-bold bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300 transition text-[11px] flex items-center gap-1 shadow-2xs"
+                    title="Select only agents with returns exceeding threshold"
+                  >
+                    <span>✓ Over {returnThreshold}%</span>
+                    <span className="px-1.5 py-0.2 rounded-full bg-rose-200 text-rose-900 text-[10px] font-mono">
+                      {allAgentResults.filter((r) => r.returnPct >= returnThreshold).length}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSelectAllProofAgents}
+                    className="px-2.5 py-1 rounded-lg font-bold bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 transition text-[11px] shadow-2xs"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearProofAgents}
+                    className="px-2.5 py-1 rounded-lg font-bold bg-white hover:bg-slate-100 text-slate-500 border border-slate-300 transition text-[11px]"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-lg bg-purple-50 text-purple-700 font-bold text-[11px] border border-purple-200">
+                    {proofSelectedAgents.size} of {filteredResults.length} in Proof
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setActivePreviewTab("proof")}
+                    className={`px-3 py-1 rounded-lg font-bold transition text-[11px] flex items-center gap-1.5 shadow-2xs ${
+                      activePreviewTab === "proof"
+                        ? "bg-rose-700 text-white shadow-xs"
+                        : "bg-white text-rose-700 border border-rose-300 hover:bg-rose-50"
+                    }`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>View Proof Preview</span>
+                  </button>
+                </div>
+              </div>
+
               {excludedAgents.size > 0 && (
                 <div className="px-4 py-2 bg-indigo-50 border-b border-indigo-100 text-xs flex items-center justify-between text-indigo-800 font-medium">
-                  <span>{excludedAgents.size} agents currently excluded.</span>
+                  <span>{excludedAgents.size} agents currently excluded from calculations.</span>
                   <button
                     type="button"
                     onClick={() => setExcludedAgents(new Set())}
@@ -2040,72 +2423,102 @@ export default function ReturnAnalysisPage() {
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px] tracking-wider">
-                        <th className="px-3.5 py-3">#</th>
-                        <th className="px-3.5 py-3">Code</th>
-                        <th className="px-3.5 py-3">Agent Name</th>
-                        <th className="px-3.5 py-3 text-right">Sales Qty</th>
-                        <th className="px-3.5 py-3 text-right">Return Qty</th>
-                        <th className="px-3.5 py-3 text-right">Return %</th>
-                        <th className="px-3.5 py-3 text-center">Preview Letter</th>
-                        <th className="px-3.5 py-3 text-center">Action</th>
+                        <th className="px-2.5 py-3 text-center w-10">
+                          <input
+                            type="checkbox"
+                            checked={
+                              filteredResults.length > 0 &&
+                              filteredResults.every((r) => proofSelectedAgents.has(r.agentCode))
+                            }
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                handleSelectAllProofAgents();
+                              } else {
+                                handleClearProofAgents();
+                              }
+                            }}
+                            className="rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                            title="Toggle all filtered agents in proof"
+                          />
+                        </th>
+                        <th className="px-3 py-3">#</th>
+                        <th className="px-3 py-3">Code</th>
+                        <th className="px-3 py-3">Agent Name</th>
+                        <th className="px-3 py-3 text-right">Sales Qty</th>
+                        <th className="px-3 py-3 text-right">Return Qty</th>
+                        <th className="px-3 py-3 text-right">Return %</th>
+                        <th className="px-3 py-3 text-center">In Proof Annexure</th>
+                        <th className="px-2 py-3 text-center">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-mono">
                       {filteredResults.map((r) => {
                         const isExceeded = r.returnPct >= returnThreshold;
-                        const isSelected = selectedAgent?.agentCode === r.agentCode;
+                        const isTicked = proofSelectedAgents.has(r.agentCode);
 
                         return (
                           <tr
                             key={r.agentCode}
-                            onClick={() => handleSelectAgent(r)}
+                            onClick={() => handleToggleProofAgent(r.agentCode)}
                             className={`cursor-pointer transition-colors ${
-                              isSelected
-                                ? "bg-blue-50/90 font-bold ring-1 ring-blue-300 inset-0"
+                              isTicked
+                                ? "bg-purple-50/70 font-semibold"
                                 : isExceeded
-                                ? "bg-rose-50/40 hover:bg-rose-50/80"
+                                ? "bg-rose-50/30 hover:bg-rose-50/60"
                                 : "hover:bg-slate-50"
                             }`}
                           >
-                            <td className="px-3.5 py-2.5 font-sans text-slate-400">{r.rank}</td>
-                            <td className="px-3.5 py-2.5 font-bold text-slate-900">{r.agentCode}</td>
                             <td
-                              className="px-3.5 py-2.5 font-sans text-slate-800 font-semibold truncate max-w-[160px]"
+                              className="px-2.5 py-2.5 text-center"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isTicked}
+                                onChange={() => handleToggleProofAgent(r.agentCode)}
+                                className="rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                              />
+                            </td>
+                            <td className="px-3 py-2.5 font-sans text-slate-400">{r.rank}</td>
+                            <td className="px-3 py-2.5 font-bold text-slate-900">{r.agentCode}</td>
+                            <td
+                              className="px-3 py-2.5 font-sans text-slate-800 font-semibold truncate max-w-[160px]"
                               title={r.agentName}
                             >
                               {r.agentName || "—"}
                             </td>
-                            <td className="px-3.5 py-2.5 text-right text-slate-700">
+                            <td className="px-3 py-2.5 text-right text-slate-700">
                               {r.salesQty.toLocaleString()}
                             </td>
-                            <td className="px-3.5 py-2.5 text-right font-bold text-rose-700">
+                            <td className="px-3 py-2.5 text-right font-bold text-rose-700">
                               {r.returnQty.toLocaleString()}
                             </td>
                             <td
-                              className={`px-3.5 py-2.5 text-right font-black ${
+                              className={`px-3 py-2.5 text-right font-black ${
                                 isExceeded ? "text-rose-600" : "text-slate-800"
                               }`}
                             >
                               {r.returnPct.toFixed(2)}%
                             </td>
-                            <td className="px-3.5 py-2.5 text-center font-sans">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleSelectAgent(r);
-                                }}
-                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 mx-auto ${
-                                  isSelected
-                                    ? "bg-blue-600 text-white shadow-2xs"
-                                    : "bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-800"
+                            <td className="px-3 py-2.5 text-center font-sans">
+                              <span
+                                className={`px-2 py-0.5 rounded-md text-[11px] font-bold inline-flex items-center gap-1 ${
+                                  isTicked
+                                    ? "bg-purple-100 text-purple-900 border border-purple-200"
+                                    : "bg-slate-100 text-slate-400"
                                 }`}
                               >
-                                <Eye className="w-3 h-3" />
-                                <span>{isSelected ? "Active" : "Preview"}</span>
-                              </button>
+                                {isTicked ? (
+                                  <>
+                                    <Check className="w-3 h-3 text-purple-700" />
+                                    <span>Included</span>
+                                  </>
+                                ) : (
+                                  <span>Not in Proof</span>
+                                )}
+                              </span>
                             </td>
-                            <td className="px-3.5 py-2.5 text-center font-sans">
+                            <td className="px-2 py-2.5 text-center font-sans">
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -2117,7 +2530,7 @@ export default function ReturnAnalysisPage() {
                                   });
                                 }}
                                 className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                                title="Exclude agent"
+                                title="Exclude agent completely from calculations"
                               >
                                 ✕
                               </button>
