@@ -1439,7 +1439,7 @@ export default function ReturnAnalysisPage() {
         @media print {
           @page {
             size: A4 portrait;
-            margin: 10mm 14mm 10mm 14mm;
+            margin: 0;
           }
 
           html, body {
@@ -1479,15 +1479,15 @@ export default function ReturnAnalysisPage() {
             overflow: visible !important;
           }
 
-          /* Sheet formatting on paper: full width, clean margins, no borders/shadows */
+          /* Sheet formatting on paper: exact A4 width with generous 22mm side margins and 18mm top/bottom */
           .printable-preview-doc {
             display: block !important;
-            width: 100% !important;
+            width: 210mm !important;
             max-width: 100% !important;
             min-height: auto !important;
             height: auto !important;
             margin: 0 auto !important;
-            padding: 0 !important;
+            padding: 18mm 22mm 16mm 22mm !important;
             border: none !important;
             box-shadow: none !important;
             background: #ffffff !important;
