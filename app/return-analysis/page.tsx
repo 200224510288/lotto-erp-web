@@ -1905,60 +1905,67 @@ export default function ReturnAnalysisPage() {
                 </div>
 
                 {/* 6. Agent Signature & Seal Block */}
-                <div className="flex justify-between items-end pt-3 text-[12px]">
-                  <div className="space-y-1">
-                    <div>
-                      <span>අත්සන </span>
-                      <span className="inline-block w-36 border-b border-dotted border-slate-600"></span>
+                <div className="flex justify-between items-end pt-5 sm:pt-6 text-[12px]">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">අත්සන:</span>
+                      <span className="inline-block w-48 border-b border-dotted border-slate-700"></span>
                     </div>
                     <div>
-                      <span>නම </span>
+                      <span>නම: </span>
                       <span className="font-bold underline">{letterAgentName}</span>
-                      <span className="font-mono text-xs"> ({letterAgentCode})</span>
+                      <span className="font-mono text-xs text-slate-700"> ({letterAgentCode})</span>
                     </div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right pb-1">
                     <span className="text-xs text-slate-600 font-semibold">රබර් මුද්‍රාව</span>
                   </div>
                 </div>
 
                 {/* Heavy Divider */}
-                <hr className="border-t-2 border-slate-900 my-2.5" />
+                <hr className="border-t-2 border-slate-900 my-3" />
 
                 {/* 7. Field Officer Recommendation */}
-                <div className="space-y-1 text-[11.5px] sm:text-[12px]">
-                  <div className="font-bold text-[12.5px]">ක්ෂේත්‍ර නිලධාරී නිර්දේශය</div>
-                  <div className="text-justify leading-relaxed">
+                <div className="space-y-2 text-[11.5px] sm:text-[12px]">
+                  <div className="font-bold text-[12.5px] text-slate-900">ක්ෂේත්‍ර නිලධාරී නිර්දේශය</div>
+                  <div className="text-justify leading-relaxed text-slate-800">
                     මෙම බෙදාහැරීමේ අලෙවි නියෝජිත මහතාගේ ඉහත සඳහන් දිනට අදාලව අනුමත ප්‍රතිශතය ඉක්මවා ආපසු එවුම් ඉහළ යාම පිලිබඳ ඉදිරිපත්කර ඇති හේතුන් සාධාරණ බව තහවුරු කරමි./ නොකරමි.
                   </div>
-                  <div className="text-slate-700">කලාප කළමනාකරු / අලෙවි ප්‍රවර්ධන සහකාර</div>
+                  <div className="text-slate-700 font-medium">කලාප කළමනාකරු / අලෙවි ප්‍රවර්ධන සහකාර</div>
 
-                  <div className="flex justify-between items-end pt-2">
-                    <div className="space-y-1">
-                      <div>
-                        <span>අත්සන </span>
-                        <span className="inline-block w-36 border-b border-dotted border-slate-600"></span>
+                  <div className="flex justify-between items-end pt-5 sm:pt-6">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span>අත්සන:</span>
+                        <span className="inline-block w-48 border-b border-dotted border-slate-700"></span>
                       </div>
                       <div>
                         <span>නම: </span>
                         <span className="font-bold">{letterOfficerName}</span>
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right pb-1">
                       <span className="text-xs text-slate-600 font-semibold">රබර් මුද්‍රාව</span>
                     </div>
                   </div>
                 </div>
 
                 {/* Heavy Divider */}
-                <hr className="border-t-2 border-slate-900 my-2.5" />
+                <hr className="border-t-2 border-slate-900 my-3" />
 
                 {/* 8. Management Approval */}
-                <div className="space-y-2 pt-0.5 text-[11.5px] sm:text-[12px]">
-                  <div>කොමිස් මුදල කපා හැරීම අත්හිටුවීම අනුමත කරමි/ නොකරමි.</div>
-                  <div className="border-b border-dotted border-slate-600 w-52 h-3"></div>
-                  <div className="text-slate-700">
-                    නියෝජ්‍ය සාමාන්‍යාධිකාරී (අලෙවි) / සහකාර සාමාන්‍යාධිකාරී (විකුණුම්)
+                <div className="space-y-2 pt-1 text-[11.5px] sm:text-[12px]">
+                  <div className="font-medium text-slate-900">කොමිස් මුදල කපා හැරීම අත්හිටුවීම අනුමත කරමි / නොකරමි.</div>
+                  <div className="pt-7 sm:pt-8 flex justify-between items-end">
+                    <div className="space-y-1.5">
+                      <div className="border-b border-dotted border-slate-700 w-60"></div>
+                      <div className="text-slate-800 font-medium text-[11.5px]">
+                        නියෝජ්‍ය සාමාන්‍යාධිකාරී (අලෙවි) / සහකාර සාමාන්‍යාධිකාරී (විකුණුම්)
+                      </div>
+                    </div>
+                    <div className="text-right text-[11px] text-slate-500 font-mono">
+                      දිනය: ....................
+                    </div>
                   </div>
                 </div>
               </div>
