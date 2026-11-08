@@ -1433,37 +1433,107 @@ export default function ReturnAnalysisPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 pb-16 font-sans">
-      {/* Print Styles: isolates preview documents and supports multi-page bundle printing */}
+    <div className="min-h-screen bg-slate-100 text-slate-900 pb-16 font-sans print-clean-container">
+      {/* Print Styles: isolates preview documents with perfect margins and supports multi-page bundle printing */}
       <style jsx global>{`
         @media print {
-          body * {
-            visibility: hidden !important;
+          @page {
+            size: A4 portrait;
+            margin: 10mm 14mm 10mm 14mm;
           }
-          .printable-preview-doc,
-          .printable-preview-doc * {
-            visibility: visible !important;
+
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            min-width: 100% !important;
+            height: auto !important;
+            background: #ffffff !important;
+            color: #000000 !important;
+            font-size: 11pt !important;
+            overflow: visible !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
-          .printable-preview-doc {
+
+          /* Hide all non-printable UI entirely from layout flow */
+          .no-print,
+          .no-print * {
+            display: none !important;
+          }
+
+          /* Reset all parent containers so the preview documents span full page width naturally without offsets */
+          .print-clean-container {
             display: block !important;
-            position: relative !important;
-            left: 0 !important;
-            top: 0 !important;
             width: 100% !important;
             max-width: 100% !important;
-            margin: 0 auto !important;
-            padding: 12mm 15mm !important;
-            box-shadow: none !important;
+            min-width: 100% !important;
+            height: auto !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
             border: none !important;
-            background: white !important;
+            box-shadow: none !important;
+            background: transparent !important;
+            position: static !important;
+            overflow: visible !important;
+          }
+
+          /* Sheet formatting on paper: full width, clean margins, no borders/shadows */
+          .printable-preview-doc {
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            min-height: auto !important;
+            height: auto !important;
+            margin: 0 auto !important;
+            padding: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+            background: #ffffff !important;
+            color: #000000 !important;
+            overflow: visible !important;
+            box-sizing: border-box !important;
+          }
+
+          /* Multi-page break: page-break between multiple documents only */
+          .printable-preview-doc:not(:last-child) {
             page-break-after: always !important;
             break-after: page !important;
+          }
+
+          /* Input fields in table print cleanly as centered text */
+          .printable-preview-doc input {
+            border: none !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            outline: none !important;
+            color: #000000 !important;
+            -webkit-text-fill-color: #000000 !important;
+            text-align: center !important;
+            font-weight: bold !important;
+          }
+
+          /* Tables and rows */
+          .printable-preview-doc table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+          }
+
+          .printable-preview-doc tr {
+            page-break-inside: avoid !important;
+          }
+
+          .printable-preview-doc th,
+          .printable-preview-doc td {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
         }
       `}</style>
 
       {/* Top Navbar */}
-      <div className="w-full bg-white border-b border-slate-200 px-4 sm:px-8 py-3.5 shadow-2xs">
+      <div className="w-full bg-white border-b border-slate-200 px-4 sm:px-8 py-3.5 shadow-2xs no-print">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <span className="p-2.5 rounded-2xl bg-purple-50 text-purple-700 border border-purple-200">
@@ -1510,14 +1580,14 @@ export default function ReturnAnalysisPage() {
       </div>
 
       {/* Main Two-Pane Split Layout */}
-      <div className="w-full px-4 sm:px-6 lg:px-8 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <div className="w-full px-4 sm:px-6 lg:px-8 py-6 print-clean-container">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start print-clean-container">
           {/* =========================================================
               LEFT SIDE: A4 DOCUMENT PREVIEWS (1. NOTICE LETTER & 2. AGENT PROOF ANNEXURE)
               ========================================================= */}
-          <div className="lg:col-span-5 xl:col-span-5 space-y-3.5 lg:sticky lg:top-4">
+          <div className="lg:col-span-5 xl:col-span-5 space-y-3.5 lg:sticky lg:top-4 print-clean-container">
             {/* 2 Previews Switcher Tabs */}
-            <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-white border border-slate-200 shadow-2xs">
+            <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-white border border-slate-200 shadow-2xs no-print">
               <button
                 type="button"
                 onClick={() => setActivePreviewTab("notice")}
@@ -1555,7 +1625,7 @@ export default function ReturnAnalysisPage() {
             </div>
 
             {/* Preview Toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-2 bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-xs no-print">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className={`h-2.5 w-2.5 rounded-full animate-pulse ${activePreviewTab === "notice" ? "bg-purple-600" : "bg-rose-600"}`} />
                 <span className="text-xs font-black text-slate-800 uppercase tracking-wide">
@@ -1635,7 +1705,7 @@ export default function ReturnAnalysisPage() {
 
             {/* Quick Letter Customizer Drawer */}
             {showLetterSettings && (
-              <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4 space-y-3 text-xs animate-in fade-in duration-100 shadow-xs">
+              <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4 space-y-3 text-xs animate-in fade-in duration-100 shadow-xs no-print">
                 <div className="flex items-center justify-between pb-1 border-b border-blue-100">
                   <span className="font-black text-blue-900 uppercase tracking-wide">
                     {activePreviewTab === "notice" ? "Customize Notice Details" : "Customize Proof Annexure Details"}
@@ -1722,7 +1792,7 @@ export default function ReturnAnalysisPage() {
             )}
 
             {/* Pristine A4 Document Sheets Container */}
-            <div className="overflow-x-auto rounded-3xl p-1 bg-slate-200/60 shadow-inner flex flex-col items-center gap-6">
+            <div className="overflow-x-auto rounded-3xl p-1 bg-slate-200/60 shadow-inner flex flex-col items-center gap-6 print-clean-container">
               {/* Sheet 1: Official District Distributor Return Notice Letter */}
               <div
                 ref={previewSheetRef}
@@ -2000,7 +2070,7 @@ export default function ReturnAnalysisPage() {
           {/* =========================================================
               RIGHT SIDE: REST COMPONENTS (CONTROLS, STATS & AGENTS TABLE)
               ========================================================= */}
-          <div className="lg:col-span-7 xl:col-span-7 space-y-5">
+          <div className="lg:col-span-7 xl:col-span-7 space-y-5 no-print">
             {/* 1. Report Period & Configuration Card */}
             <div className="rounded-3xl bg-white p-5 sm:p-6 border border-slate-200 shadow-sm space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
