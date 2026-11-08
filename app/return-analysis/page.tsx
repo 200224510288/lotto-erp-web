@@ -32,6 +32,7 @@ import {
   loadReturnThresholds,
   saveReturnThresholds,
   ReturnThresholdConfig,
+  findLotteryInfo,
 } from "../lib/returnThresholdConfig";
 
 export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
@@ -55,6 +56,96 @@ export const OFFICIAL_SINHALA_LOTTERIES = [
   "ජය සම්පත",
   "වාසි",
 ];
+
+export function toOfficialSinhalaLotteryName(lotteryOrGame: string): string | null {
+  if (!lotteryOrGame) return null;
+  const lot = findLotteryInfo(lotteryOrGame);
+  if (lot) {
+    switch (lot.id) {
+      case "ada_kotipathi": return "අද කෝටිපති";
+      case "kapruka": return "කප්රුක";
+      case "lagna_wasana": return "ලග්න";
+      case "sasiri": return "සසිරි";
+      case "shanida": return "ශනිදා";
+      case "super_ball": return "සුපර් බෝල්";
+      case "supiri_dhana": return "සුපිරි ධන සම්පත";
+      case "jaya_sampatha": return "ජය සම්පත";
+      case "wasi": return "වාසි";
+      default: return lot.sinhalaName || null;
+    }
+  }
+  const upper = lotteryOrGame.trim().toUpperCase();
+  if (/ADA|KOTIPATHI|AKS|ASA|AMO|AFR|ATH|AWD|ATU/i.test(upper)) return "අද කෝටිපති";
+  if (/KAPRUKA|KTS|KSA|KPM|KPF|KTH|KPW|KPT/i.test(upper)) return "කප්රුක";
+  if (/LAGNA|LWS|LSA|LMO|LWF|LTH|LWW|LWT/i.test(upper)) return "ලග්න";
+  if (/SASIRI|JAYODA|JSA|SS|JMO|JST|JSW|JTH|JFR|JSU/i.test(upper)) return "සසිරි";
+  if (/SHANIDA|SFS|SFM|SFT|SFH|SFR|SFU|SFA|SFW|SFF/i.test(upper)) return "ශනිදා";
+  if (/SUPER|SBS|SBM|BTU|SBW|SBT|SBF|SSU|SBA|SBI/i.test(upper)) return "සුපර් බෝල්";
+  if (/SUPIRI|DEVELOPMENT|SPS|SRS|SRM|SRT|SWD|STH|SRF|SRU|SPM|SPA|SPW|SPT|SPF|SPI/i.test(upper)) return "සුපිරි ධන සම්පත";
+  if (/JAYA|DHANA\s*NIDHANAYA|VS|DSA|DMO|DTU|DWD|DTH|DFI|DSU|VM|VA|VW|VT|VF|VI/i.test(upper)) return "ජය සම්පත";
+  if (/WASI|VASI|WS|WSA|WMO|WTU|WWD|WTH|WFR|WSU|WM|WA|WW|WT|WF|WI/i.test(upper)) return "වාසි";
+  return null;
+}
+
+export function extractFileReturnQuantity(cells: (string | number | boolean | null)[][]): number {
+  if (!cells || cells.length === 0) return 0;
+
+  // 1. Search for explicit TOTAL / GRAND TOTAL row
+  for (let i = cells.length - 1; i >= 0; i--) {
+    const row = cells[i];
+    if (!row) continue;
+    const isTotalRow = row.some((c) => {
+      const s = String(c ?? "").trim().toUpperCase();
+      return s === "TOTAL" || s === "GRAND TOTAL" || s.startsWith("TOTAL ") || s.includes("GRAND TOTAL");
+    });
+    if (isTotalRow) {
+      for (let j = row.length - 1; j >= 0; j--) {
+        const val = Number(String(row[j] ?? "").replace(/,/g, "").trim());
+        if (Number.isFinite(val) && val > 0) {
+          return val;
+        }
+      }
+    }
+  }
+
+  // 2. Search for DRAW NO header line that carries total quantity
+  for (let i = 0; i < Math.min(cells.length, 10); i++) {
+    const row = cells[i];
+    if (!row) continue;
+    const hasDrawHeader = row.some((c) => String(c ?? "").toUpperCase().includes("DRAW NO"));
+    if (hasDrawHeader) {
+      for (let j = row.length - 1; j >= 0; j--) {
+        const val = Number(String(row[j] ?? "").replace(/,/g, "").trim());
+        if (Number.isFinite(val) && val > 0) {
+          return val;
+        }
+      }
+    }
+  }
+
+  // 3. Fallback: sum of all agent return rows (any row with 5-6 digit dealer code and numeric qty)
+  let sum = 0;
+  for (const row of cells) {
+    if (!row || row.length === 0) continue;
+    if (row.some((c) => String(c ?? "").toUpperCase().includes("TOTAL"))) continue;
+
+    const hasDealer = row.some((c) => {
+      const digits = String(c ?? "").replace(/\D/g, "");
+      return digits.length === 5 || digits.length === 6;
+    });
+    if (!hasDealer) continue;
+
+    for (let j = row.length - 1; j >= 0; j--) {
+      const s = String(row[j] ?? "").replace(/,/g, "").trim();
+      const n = Number(s);
+      if (Number.isFinite(n) && n > 0 && n <= 100000 && /^\d+$/.test(s)) {
+        sum += n;
+        break;
+      }
+    }
+  }
+  return sum;
+}
 
 type SaleRow = { agentCode: string; qty: number; agentName?: string };
 type ReturnRow = { agentCode: string; qty: number };
@@ -205,6 +296,9 @@ export function detectLotteryFromMetadata(meta: {
   fileName?: string;
   sheetData?: (string | number | boolean | null)[][];
 }): string | null {
+  const direct = toOfficialSinhalaLotteryName(meta.gameId || meta.gameName || meta.fileName || "");
+  if (direct) return direct;
+
   const candidates: string[] = [];
   if (meta.gameName) candidates.push(meta.gameName);
   if (meta.gameId) candidates.push(meta.gameId);
@@ -571,11 +665,35 @@ function todayKey(): string {
 }
 
 export default function ReturnAnalysisPage() {
-  const [selectedDate, setSelectedDate] = useState<string>(todayKey());
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const q = new URLSearchParams(window.location.search).get("date");
+      if (q) return q;
+      const cached = localStorage.getItem("dlb_selected_date");
+      if (cached) return cached;
+    }
+    return todayKey();
+  });
   const [reportMode, setReportMode] = useState<"daily" | "weekly" | "monthly">("daily");
   const [returnThreshold, setReturnThreshold] = useState<number>(5);
   const [isSavingThresholdCloud, setIsSavingThresholdCloud] = useState<boolean>(false);
   const [thresholdCloudSuccess, setThresholdCloudSuccess] = useState<boolean>(false);
+
+  // Sync date from URL search params on mount or change
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const q = new URLSearchParams(window.location.search).get("date");
+      if (q && q !== selectedDate) {
+        setSelectedDate(q);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && selectedDate) {
+      localStorage.setItem("dlb_selected_date", selectedDate);
+    }
+  }, [selectedDate]);
 
   // Load cloud-saved threshold on mount & listen for updates
   useEffect(() => {
@@ -714,28 +832,13 @@ export default function ReturnAnalysisPage() {
     };
   }, [filteredResults]);
 
-  // Helper to re-calculate letter table cells from state
-  function syncLetterQtys(
-    targetMode: "agent" | "office",
-    agentCode: string | null,
-    agentMap: Record<string, Record<string, number>>,
-    totalsMap: Record<string, number>,
-    unit: "tickets" | "books"
-  ) {
-    const source =
-      targetMode === "office" || !agentCode
-        ? totalsMap
-        : agentMap[agentCode] || {};
-
+  // Helper to sync letter table cells from totalsMap (strictly in returned books)
+  function syncLetterQtys(totalsMap: Record<string, number>) {
     const newQtys: Record<string, string> = {};
     for (const lot of OFFICIAL_SINHALA_LOTTERIES) {
-      const rawVal = source[lot];
-      if (rawVal !== undefined && rawVal > 0) {
-        if (unit === "books" && rawVal >= 100) {
-          newQtys[lot] = Math.round(rawVal / 100).toString();
-        } else {
-          newQtys[lot] = rawVal.toString();
-        }
+      const rawVal = totalsMap[lot];
+      if (typeof rawVal === "number" && rawVal > 0) {
+        newQtys[lot] = rawVal.toString();
       } else {
         newQtys[lot] = "";
       }
@@ -753,21 +856,22 @@ export default function ReturnAnalysisPage() {
 
   function handleSelectAgent(agent: AgentResultRow) {
     setSelectedAgent(agent);
-    setLetterViewTarget("agent");
     setLetterAgentName(toSinhalaAgentName(agent.agentName || "එස් ඩබ් ඕ සිල්වා", agent.agentCode));
     setLetterAgentCode(agent.agentCode || "030409");
-    syncLetterQtys("agent", agent.agentCode, lotteryReturnsByAgent, dateLotteryTotals, quantityUnit);
+    const agentMap = lotteryReturnsByAgent[agent.agentCode];
+    if (agentMap && Object.values(agentMap).some((v) => v > 0)) {
+      syncLetterQtys(agentMap);
+    } else if (Object.values(dateLotteryTotals).some((v) => v > 0)) {
+      syncLetterQtys(dateLotteryTotals);
+    }
   }
 
   function handleSelectOfficeTotal() {
-    setLetterViewTarget("office");
-    syncLetterQtys("office", null, lotteryReturnsByAgent, dateLotteryTotals, quantityUnit);
+    // legacy stub
   }
 
-  function handleToggleUnit(unit: "tickets" | "books") {
-    setQuantityUnit(unit);
-    const activeCode = selectedAgent?.agentCode || letterAgentCode;
-    syncLetterQtys(letterViewTarget, activeCode, lotteryReturnsByAgent, dateLotteryTotals, unit);
+  function handleToggleUnit(_unit: "tickets" | "books") {
+    // legacy stub
   }
 
   // Filter saved files so we only include days that have both ERP and Return uploads
@@ -810,10 +914,20 @@ export default function ReturnAnalysisPage() {
         gameName: rec?.gameName || (f as any).gameName,
       });
 
-      const lot = parsed.lottery;
+      const lot = toOfficialSinhalaLotteryName(
+        rec?.gameId || rec?.gameName || rec?.fileName || f.name || parsed.lottery || ""
+      );
+
+      const fileReturnQty =
+        typeof rec?.returnQty === "number" && rec.returnQty > 0
+          ? rec.returnQty
+          : parsed.totalQty > 0
+          ? parsed.totalQty
+          : extractFileReturnQuantity(d);
+
       if (lot && OFFICIAL_SINHALA_LOTTERIES.includes(lot)) {
         // Add to date totals
-        nextTotals[lot] = (nextTotals[lot] || 0) + parsed.totalQty;
+        nextTotals[lot] = (nextTotals[lot] || 0) + fileReturnQty;
 
         // If file had a distributor code in the header
         if (parsed.distributorCode) {
@@ -822,7 +936,7 @@ export default function ReturnAnalysisPage() {
             nextAgentMap[parsed.distributorCode] = {};
           }
           nextAgentMap[parsed.distributorCode][lot] =
-            (nextAgentMap[parsed.distributorCode][lot] || 0) + parsed.totalQty;
+            (nextAgentMap[parsed.distributorCode][lot] || 0) + fileReturnQty;
         }
 
         if (parsed.distributorName) matchedDistributorName = parsed.distributorName;
@@ -856,8 +970,7 @@ export default function ReturnAnalysisPage() {
       setLetterReason(toSinhalaReason(matchedReason));
     }
 
-    const currentAgent = selectedAgent?.agentCode || matchedDistributorCode || null;
-    syncLetterQtys(letterViewTarget, currentAgent, nextAgentMap, nextTotals, quantityUnit);
+    syncLetterQtys(nextTotals);
 
     return { nextAgentMap, nextTotals };
   }
@@ -869,19 +982,37 @@ export default function ReturnAnalysisPage() {
     if (!targetDate || filesToFetch.length === 0) return;
     setIsFetchingDateReturns(true);
     try {
+      // 1. Immediately populate from any known returnQty in filesToFetch (0ms)
+      const immediateTotals: Record<string, number> = {};
+      for (const u of filesToFetch) {
+        const lot = toOfficialSinhalaLotteryName(u.gameId || u.gameName || u.fileName);
+        if (lot && typeof u.returnQty === "number" && u.returnQty > 0) {
+          immediateTotals[lot] = (immediateTotals[lot] || 0) + u.returnQty;
+        }
+      }
+      if (Object.keys(immediateTotals).length > 0) {
+        setDateLotteryTotals((prev) => ({ ...prev, ...immediateTotals }));
+        syncLetterQtys(immediateTotals);
+      }
+
+      // 2. Fetch and parse detailed sheets in background
       const fetched: File[] = [];
       for (const u of filesToFetch) {
         if (!u.downloadUrl) continue;
-        const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
-        const res = await fetch(proxyUrl);
-        if (!res.ok) continue;
-        const blob = await res.blob();
-        const file = new File([blob], u.fileName, {
-          type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        });
-        (file as any).gameId = u.gameId;
-        (file as any).gameName = u.gameName;
-        fetched.push(file);
+        try {
+          const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
+          const res = await fetch(proxyUrl);
+          if (!res.ok) continue;
+          const blob = await res.blob();
+          const file = new File([blob], u.fileName, {
+            type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          });
+          (file as any).gameId = u.gameId;
+          (file as any).gameName = u.gameName;
+          fetched.push(file);
+        } catch (e) {
+          console.warn(`Could not fetch return file ${u.fileName}:`, e);
+        }
       }
       if (fetched.length > 0) {
         setReturnFiles(fetched);
@@ -919,6 +1050,13 @@ export default function ReturnAnalysisPage() {
         // Automatically fetch and parse actual returns for the selected date!
         if (retFiles && retFiles.length > 0) {
           fetchAndProcessReturnsForDate(selectedDate, retFiles);
+        } else if (reportMode === "daily" && retFiles.length === 0 && selectedDate === todayKey()) {
+          // If today has no files yet, automatically try 2026-11-07
+          listReturnUploadedFilesByDate("2026-11-07").then((yFiles) => {
+            if (isMounted && yFiles.length > 0) {
+              setSelectedDate("2026-11-07");
+            }
+          });
         }
       })
       .catch((err) => {
@@ -1199,85 +1337,27 @@ export default function ReturnAnalysisPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="text-xs font-black text-slate-800 uppercase tracking-wide">
-                  {letterViewTarget === "office" ? "Office Total Return Notice" : "Agent Notice Preview"}
+                  Return Notice Letter Preview
                 </span>
-                {letterViewTarget === "agent" && (
-                  <span className="px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 font-mono text-[11px] font-bold">
-                    {letterAgentCode}
-                  </span>
-                )}
+                <span className="px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 font-mono text-[11px] font-bold">
+                  {letterAgentCode || "030409"}
+                </span>
+                <span className="px-2 py-0.5 rounded-lg bg-purple-50 text-purple-700 font-mono text-[11px] font-bold">
+                  {selectedDate}
+                </span>
               </div>
 
               <div className="flex items-center gap-1.5 flex-wrap">
-                {/* View Target Switcher */}
-                <div className="inline-flex rounded-xl bg-slate-100 p-0.5 border border-slate-200 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLetterViewTarget("agent");
-                      const activeCode = selectedAgent?.agentCode || letterAgentCode;
-                      syncLetterQtys("agent", activeCode, lotteryReturnsByAgent, dateLotteryTotals, quantityUnit);
-                    }}
-                    className={`px-2 py-1 rounded-lg font-bold transition ${
-                      letterViewTarget === "agent"
-                        ? "bg-white text-slate-900 shadow-2xs"
-                        : "text-slate-500 hover:text-slate-800"
-                    }`}
-                    title="View return notice for selected agent"
-                  >
-                    Agent
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSelectOfficeTotal}
-                    className={`px-2 py-1 rounded-lg font-bold transition ${
-                      letterViewTarget === "office"
-                        ? "bg-white text-slate-900 shadow-2xs"
-                        : "text-slate-500 hover:text-slate-800"
-                    }`}
-                    title="View total returns notice for entire office/date"
-                  >
-                    Office Total
-                  </button>
-                </div>
-
-                {/* Unit Toggle: Tickets vs Books */}
-                <div className="inline-flex rounded-xl bg-slate-100 p-0.5 border border-slate-200 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => handleToggleUnit("tickets")}
-                    className={`px-2 py-1 rounded-lg font-bold transition ${
-                      quantityUnit === "tickets"
-                        ? "bg-purple-700 text-white shadow-2xs"
-                        : "text-slate-500 hover:text-slate-800"
-                    }`}
-                    title="Show exact ticket count"
-                  >
-                    Tickets
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleUnit("books")}
-                    className={`px-2 py-1 rounded-lg font-bold transition ${
-                      quantityUnit === "books"
-                        ? "bg-purple-700 text-white shadow-2xs"
-                        : "text-slate-500 hover:text-slate-800"
-                    }`}
-                    title="Show count in Books (÷ 100)"
-                  >
-                    Books (÷100)
-                  </button>
-                </div>
-
                 {/* Re-fetch Returns Button */}
                 <button
                   type="button"
                   disabled={isFetchingDateReturns || dbReturnFiles.length === 0}
                   onClick={() => fetchAndProcessReturnsForDate(selectedDate, dbReturnFiles)}
-                  className="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold transition"
+                  className="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold transition flex items-center gap-1"
                   title="Re-fetch actual returns for this date from database"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isFetchingDateReturns ? "animate-spin text-purple-600" : ""}`} />
+                  <span className="text-[11px] font-semibold text-slate-600">Refresh</span>
                 </button>
 
                 <button
@@ -1290,7 +1370,7 @@ export default function ReturnAnalysisPage() {
                   }`}
                   title="Customize Letter Text & Fields"
                 >
-                  <Settings className="w-4 h-4" />
+                  <Settings className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Fields</span>
                 </button>
 
@@ -1465,12 +1545,7 @@ export default function ReturnAnalysisPage() {
                               <span className="inline-block w-4 font-mono text-[11px] text-slate-600">
                                 {idx + 1}
                               </span>
-                              <span>{lottery}</span>
-                              {isSpecialTenPercentLottery(lottery) && (
-                                <span className="ml-1 text-[10px] font-bold text-amber-800">
-                                  (10% සීමාව)
-                                </span>
-                              )}
+                              <span className="font-semibold text-slate-900">{lottery}</span>
                             </td>
                             <td className="py-0.5 px-2 text-center font-mono">
                               <input
@@ -1794,40 +1869,14 @@ export default function ReturnAnalysisPage() {
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 font-medium">
-                      Actual returns detected per lottery game for{" "}
-                      {letterViewTarget === "agent" && (selectedAgent?.agentCode || letterAgentCode)
-                        ? `agent ${selectedAgent?.agentCode || letterAgentCode}`
-                        : "entire office"}
+                      Actual returns detected in books per lottery game for {selectedDate}
                     </p>
                   </div>
 
                   <div className="flex items-center gap-1.5 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLetterViewTarget("agent");
-                        const activeCode = selectedAgent?.agentCode || letterAgentCode;
-                        syncLetterQtys("agent", activeCode, lotteryReturnsByAgent, dateLotteryTotals, quantityUnit);
-                      }}
-                      className={`px-2.5 py-1 rounded-xl font-bold transition ${
-                        letterViewTarget === "agent"
-                          ? "bg-purple-700 text-white shadow-2xs"
-                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                      }`}
-                    >
-                      Agent View
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSelectOfficeTotal}
-                      className={`px-2.5 py-1 rounded-xl font-bold transition ${
-                        letterViewTarget === "office"
-                          ? "bg-purple-700 text-white shadow-2xs"
-                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                      }`}
-                    >
-                      Office Total
-                    </button>
+                    <span className="px-2.5 py-1 rounded-xl bg-purple-100 text-purple-800 text-[11px] font-bold">
+                      Books Returned
+                    </span>
                   </div>
                 </div>
 
@@ -1881,9 +1930,14 @@ export default function ReturnAnalysisPage() {
                               hasReturns ? "text-purple-900" : "text-slate-400"
                             }`}
                           >
-                            {quantityUnit === "books" && displayVal >= 100
-                              ? `${Math.round(displayVal / 100)} books`
-                              : `${displayVal.toLocaleString()} tickets`}
+                            {displayVal > 0 ? (
+                              <span>
+                                {displayVal.toLocaleString()}{" "}
+                                <span className="text-[11px] font-normal text-slate-500">books</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 font-normal text-xs">0 books</span>
+                            )}
                           </span>
                         </div>
                         {letterViewTarget === "agent" && totalVal > 0 && totalVal !== agentVal && (

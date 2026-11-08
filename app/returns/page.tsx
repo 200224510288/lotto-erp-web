@@ -198,7 +198,15 @@ export default function ReturnsPage() {
   const [error, setError] = useState<string | null>(null);
 
   // ✅ Top business date drives: uploads list, draw date, and game-day auto detect
-  const [businessDate, setBusinessDate] = useState<string>(todayKey());
+  const [businessDate, setBusinessDate] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const q = new URLSearchParams(window.location.search).get("date");
+      if (q) return q;
+      const cached = localStorage.getItem("dlb_selected_date");
+      if (cached) return cached;
+    }
+    return todayKey();
+  });
 
   const [previewTable, setPreviewTable] = useState<Cell[][]>([]);
   const [previewLabel, setPreviewLabel] = useState<string>("");
@@ -588,6 +596,9 @@ export default function ReturnsPage() {
   // ✅ When businessDate changes: update uploads list + sales benchmark + drawDate/draw for all files + rerun auto-detect
   function handleBusinessDateChange(v: string) {
     setBusinessDate(v);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("dlb_selected_date", v);
+    }
     void loadUploads(v);
     void loadSalesForDate(v);
 
@@ -1106,7 +1117,7 @@ export default function ReturnsPage() {
             {/* Financial & Compliance Balancing Row */}
             <div className="flex items-center gap-2">
               <Link
-                href="/return-analysis"
+                href={`/return-analysis?date=${businessDate}`}
                 className="px-3 py-1.5 rounded bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow flex items-center gap-1.5 transition-colors"
                 title="Open Sinhala 5% Return Excess Notice Generator"
               >
@@ -1485,7 +1496,7 @@ export default function ReturnsPage() {
               </div>
 
               <Link
-                href="/return-analysis"
+                href={`/return-analysis?date=${businessDate}`}
                 className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1 transition-colors shadow-2xs"
                 title="Open Return Analysis Notice Generator"
               >

@@ -178,6 +178,7 @@ export async function listReturnUploadedFilesByDate(
       downloadUrl: data.downloadUrl ?? "",
       size: data.size ?? 0,
       storagePath: data.storagePath ?? "",
+      returnQty: data.returnQty,
       createdAt: data.createdAt,
     });
   });
@@ -232,6 +233,7 @@ export async function listReturnUploadedFilesByDateRange(
       downloadUrl: data.downloadUrl ?? "",
       size: data.size ?? 0,
       storagePath: data.storagePath ?? "",
+      returnQty: data.returnQty,
       createdAt: data.createdAt,
     });
   });
