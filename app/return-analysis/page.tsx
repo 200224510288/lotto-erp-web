@@ -1110,16 +1110,44 @@ export default function ReturnAnalysisPage() {
         setDbErpFiles(erpFiles);
         setDbReturnFiles(retFiles);
         setIsLoadingDbFiles(false);
-        // Automatically fetch and parse actual returns for the selected date!
-        if (retFiles && retFiles.length > 0) {
-          fetchAndProcessReturnsForDate(selectedDate, retFiles);
-        } else if (reportMode === "daily" && retFiles.length === 0 && selectedDate === todayKey()) {
-          // If today has no files yet, automatically try 2026-11-07
+
+        // If today has no files yet, automatically try 2026-11-07 on initial daily view
+        if (reportMode === "daily" && erpFiles.length === 0 && retFiles.length === 0 && selectedDate === todayKey()) {
           listReturnUploadedFilesByDate("2026-11-07").then((yFiles) => {
             if (isMounted && yFiles.length > 0) {
               setSelectedDate("2026-11-07");
             }
           });
+          return;
+        }
+
+        // If no files found for the selected date, clear previous calculations
+        if (erpFiles.length === 0 && retFiles.length === 0) {
+          setAllAgentResults([]);
+          setExcludedAgents(new Set());
+          setDateLotteryTotals({});
+          setLotteryBookQtys({
+            "අද කෝටිපති": "",
+            "කප්රුක": "",
+            "ලග්න": "",
+            "සසිරි": "",
+            "ශනිදා": "",
+            "සුපර් බෝල්": "",
+            "සුපිරි ධන සම්පත": "",
+            "ජය සම්පත": "",
+            "වාසි": "",
+          });
+          return;
+        }
+
+        // Automatically fetch and parse actual returns for the selected date to fill Notice letter blanks
+        if (retFiles && retFiles.length > 0) {
+          fetchAndProcessReturnsForDate(selectedDate, retFiles);
+        }
+
+        // Automatically execute full sales vs returns analysis when both are present
+        if (erpFiles && erpFiles.length > 0 && retFiles && retFiles.length > 0) {
+          handleLoadSavedAndRun(erpFiles, retFiles);
         }
       })
       .catch((err) => {
@@ -1202,51 +1230,85 @@ export default function ReturnAnalysisPage() {
     }
   }
 
-  async function handleLoadSavedAndRun() {
+  async function handleLoadSavedAndRun(
+    explicitErpFiles?: UploadedFileRecord[],
+    explicitRetFiles?: ReturnUploadedFileRecord[]
+  ) {
     setError(null);
-    setAllAgentResults([]);
-    setExcludedAgents(new Set());
     if (!selectedDate) return setError("Please select a date first.");
-    if (activeErpFiles.length === 0) {
-      return setError(`No dates with both ERP and Return files found in the selected range.`);
+
+    const erpToUse = explicitErpFiles || activeErpFiles;
+    const retToUse = explicitRetFiles || activeReturnFiles;
+
+    if (erpToUse.length === 0 || retToUse.length === 0) {
+      return;
     }
 
     setIsFetchingSaved(true);
     setIsBusy(true);
 
     try {
-      const fetchedSales: File[] = [];
-      const fetchedReturns: File[] = [];
-
-      for (const u of activeErpFiles) {
-        if (!u.downloadUrl) continue;
-        const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
-        const res = await fetch(proxyUrl);
-        if (!res.ok) throw new Error(`Failed to fetch saved ERP file: ${u.fileName}`);
-        const blob = await res.blob();
-        const file = new File([blob], u.fileName, {
-          type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      // 1. Parallel download for ERP files
+      const erpPromises = erpToUse
+        .filter((u) => !!u.downloadUrl)
+        .map(async (u) => {
+          try {
+            const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
+            const res = await fetch(proxyUrl);
+            if (!res.ok) return null;
+            const blob = await res.blob();
+            return new File([blob], u.fileName, {
+              type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            });
+          } catch (e) {
+            console.warn(`Could not load ERP file ${u.fileName}:`, e);
+            return null;
+          }
         });
-        fetchedSales.push(file);
-      }
 
-      for (const u of activeReturnFiles) {
-        if (!u.downloadUrl) continue;
-        const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
-        const res = await fetch(proxyUrl);
-        if (!res.ok) throw new Error(`Failed to fetch saved Return file: ${u.fileName}`);
-        const blob = await res.blob();
-        const file = new File([blob], u.fileName, {
-          type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      // 2. Parallel download for Return files
+      const retPromises = retToUse
+        .filter((u) => !!u.downloadUrl)
+        .map(async (u) => {
+          try {
+            const proxyUrl = `/api/proxy?url=${encodeURIComponent(u.downloadUrl)}`;
+            const res = await fetch(proxyUrl);
+            if (!res.ok) return null;
+            const blob = await res.blob();
+            const file = new File([blob], u.fileName, {
+              type: blob.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            });
+            (file as any).gameId = u.gameId;
+            (file as any).gameName = u.gameName;
+            return file;
+          } catch (e) {
+            console.warn(`Could not load Return file ${u.fileName}:`, e);
+            return null;
+          }
         });
-        fetchedReturns.push(file);
+
+      const [fetchedErpResults, fetchedRetResults] = await Promise.all([
+        Promise.all(erpPromises),
+        Promise.all(retPromises),
+      ]);
+
+      const fetchedSales = fetchedErpResults.filter((f): f is File => f !== null);
+      const fetchedReturns = fetchedRetResults.filter((f): f is File => f !== null);
+
+      if (fetchedSales.length === 0) {
+        throw new Error("Unable to download ERP sales files from storage.");
       }
 
       setSalesFiles(fetchedSales);
       setReturnFiles(fetchedReturns);
+
+      if (fetchedReturns.length > 0) {
+        await processReturnFilesDetailed(fetchedReturns, retToUse);
+      }
       await runAnalysisForFiles(fetchedSales, fetchedReturns);
     } catch (err: any) {
-      setError(err?.message || "Error fetching saved files.");
+      console.error("Auto analysis failed:", err);
+      setError(err?.message || "Error running sales vs returns analysis.");
     } finally {
       setIsFetchingSaved(false);
       setIsBusy(false);
@@ -1835,122 +1897,81 @@ export default function ReturnAnalysisPage() {
               <div
                 ref={proofSheetRef}
                 id="proof-preview-document"
-                className={`w-full max-w-[560px] bg-white rounded-sm shadow-2xl p-7 sm:p-9 text-slate-900 space-y-3.5 font-serif text-[11.5px] sm:text-[12px] leading-relaxed border border-slate-200 ${
+                className={`w-full max-w-[560px] bg-white rounded-sm shadow-2xl p-7 sm:p-9 text-black space-y-3.5 font-serif text-[11.5px] sm:text-[12px] leading-relaxed border border-black ${
                   activePreviewTab === "proof" || printBundle ? "block printable-preview-doc" : "hidden"
                 }`}
                 style={{ minHeight: "760px" }}
               >
-                {/* Header */}
-                <div className="flex justify-between items-start gap-4 pb-2 border-b border-slate-800">
-                  <div className="text-left space-y-0.5 leading-snug">
-                    <div className="font-bold text-slate-900 text-xs">සංවර්ධන ලොතරැයි මණ්ඩලය (DLB)</div>
-                    <div className="text-slate-600 font-sans text-[10.5px]">Development Lotteries Board</div>
-                    <div className="inline-block mt-1 px-2 py-0.5 rounded bg-rose-100 text-rose-900 font-bold font-sans text-[10px] tracking-wide border border-rose-200">
-                      සාක්ෂි අනුබද්ධය • ANNEXURE 01
-                    </div>
-                  </div>
-                  <div className="text-right space-y-0.5 leading-snug">
-                    <div className="font-bold text-slate-900">{letterAgentName}</div>
-                    <div className="font-mono text-[11px] text-slate-700">නියෝජිත අංකය: {letterAgentCode}</div>
-                    <div className="text-slate-600">{letterDistrict} දිස්ත්‍රික්කය</div>
-                    <div className="font-mono text-slate-600 text-[10.5px]">දිනය: {selectedDate}</div>
-                  </div>
-                </div>
-
                 {/* Title */}
-                <div className="text-center pt-1 pb-1">
-                  <h2 className="font-bold text-[13px] sm:text-[13.5px] underline inline-block tracking-tight text-slate-900">
+                <div className="text-center pb-2 border-b border-black">
+                  <h2 className="font-bold text-[14px] text-black">
                     {annexureTitle}
                   </h2>
-                  <div className="text-[10.5px] text-slate-500 font-sans mt-0.5">
-                    (සාක්ෂි ලේඛනය: {returnThreshold}% සීමාව ඉක්මවා ආපසු එවුම් සිදුකළ අලෙවි නියෝජිතයන්ගේ විස්තරය)
+                  <div className="text-[11px] text-black font-sans mt-0.5">
+                    දිනය: {selectedDate} | දිස්ත්‍රික් නියෝජිත: {letterAgentCode} ({letterAgentName})
                   </div>
                 </div>
 
-                {/* Summary Metric Bar */}
-                <div className="grid grid-cols-4 gap-2 text-center py-2 px-2 bg-slate-50 rounded-xl border border-slate-300">
-                  <div>
-                    <div className="text-[10px] text-slate-500 font-sans font-bold">නියෝජිතයින් ගණන</div>
-                    <div className="font-black text-slate-900 font-mono text-sm">{proofTotals.count}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-slate-500 font-sans font-bold">මුළු විකිණුම්</div>
-                    <div className="font-black text-slate-900 font-mono text-sm">{proofTotals.sales.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-slate-500 font-sans font-bold">මුළු ආපසු (Returns)</div>
-                    <div className="font-black text-rose-700 font-mono text-sm">{proofTotals.returns.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-slate-500 font-sans font-bold">ආපසු ප්‍රතිශතය</div>
-                    <div className="font-black text-rose-700 font-mono text-sm">{proofTotals.returnPct.toFixed(2)}%</div>
-                  </div>
-                </div>
-
-                {/* Table of Ticked Agents */}
+                {/* Pure Black & White Table */}
                 <div className="pt-1">
                   {proofListRows.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-slate-500 bg-slate-50 rounded border border-slate-200">
-                      <AlertTriangle className="w-6 h-6 text-amber-500 mx-auto mb-2" />
-                      <div className="font-bold text-slate-700">සාක්ෂි ලේඛනයට නියෝජිතයින් තෝරා නොමැත</div>
-                      <p className="text-[11px] text-slate-500 mt-1">
+                    <div className="p-8 text-center text-xs text-black border border-black bg-white">
+                      <div className="font-bold">සාක්ෂි ලේඛනයට නියෝජිතයින් තෝරා නොමැත</div>
+                      <p className="text-[11px] mt-1">
                         කරුණාකර දකුණු පස ඇති වගුවෙන් නියෝජිතයින් ඉදිරියේ ඇති checkbox ලකුණු කරන්න (Tick agents to include).
                       </p>
                     </div>
                   ) : (
-                    <table className="w-full border-collapse border border-slate-800 text-[11px] sm:text-[11.5px]">
+                    <table className="w-full border-collapse border border-black text-[11px] sm:text-[11.5px] text-black bg-white">
                       <thead>
-                        <tr className="border-b border-slate-800 bg-slate-100 text-center font-bold text-slate-900">
-                          <th className="border-r border-slate-800 py-1.5 px-1.5 w-[7%]">#</th>
-                          <th className="border-r border-slate-800 py-1.5 px-2 text-left w-[18%]">නියෝජිත අංකය</th>
-                          <th className="border-r border-slate-800 py-1.5 px-2 text-left w-[33%]">නියෝජිත නම</th>
-                          <th className="border-r border-slate-800 py-1.5 px-2 text-right w-[14%]">විකිණුම්</th>
-                          <th className="border-r border-slate-800 py-1.5 px-2 text-right w-[14%]">ආපසු</th>
-                          <th className="border-r border-slate-800 py-1.5 px-2 text-right w-[14%]">ප්‍රතිශතය %</th>
+                        <tr className="border-b border-black bg-white text-center font-bold text-black">
+                          <th className="border border-black py-1.5 px-1.5 w-[7%]">#</th>
+                          <th className="border border-black py-1.5 px-2 text-left w-[18%]">නියෝජිත අංකය</th>
+                          <th className="border border-black py-1.5 px-2 text-left w-[33%]">නියෝජිත නම</th>
+                          <th className="border border-black py-1.5 px-2 text-right w-[14%]">විකිණුම්</th>
+                          <th className="border border-black py-1.5 px-2 text-right w-[14%]">ආපසු</th>
+                          <th className="border border-black py-1.5 px-2 text-right w-[14%]">ප්‍රතිශතය %</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-300 font-mono">
-                        {proofListRows.map((r) => {
-                          const isOver = r.returnPct >= returnThreshold;
-                          return (
-                            <tr key={r.agentCode} className={isOver ? "bg-rose-50/40" : ""}>
-                              <td className="border-r border-slate-800 py-1 px-1.5 text-center text-slate-500">
-                                {r.rank}
-                              </td>
-                              <td className="border-r border-slate-800 py-1 px-2 font-bold text-slate-900">
-                                {r.agentCode}
-                              </td>
-                              <td
-                                className="border-r border-slate-800 py-1 px-2 font-sans font-medium text-slate-800 truncate max-w-[130px] text-left"
-                                title={r.agentName}
-                              >
-                                {r.agentName || "—"}
-                              </td>
-                              <td className="border-r border-slate-800 py-1 px-2 text-right text-slate-700">
-                                {r.salesQty.toLocaleString()}
-                              </td>
-                              <td className="border-r border-slate-800 py-1 px-2 text-right font-bold text-rose-800">
-                                {r.returnQty.toLocaleString()}
-                              </td>
-                              <td className="border-r border-slate-800 py-1 px-2 text-right font-black text-rose-700">
-                                {r.returnPct.toFixed(2)}%
-                              </td>
-                            </tr>
-                          );
-                        })}
+                      <tbody className="bg-white text-black font-mono">
+                        {proofListRows.map((r) => (
+                          <tr key={r.agentCode} className="border-b border-black bg-white">
+                            <td className="border border-black py-1 px-1.5 text-center text-black">
+                              {r.rank}
+                            </td>
+                            <td className="border border-black py-1 px-2 font-bold text-black">
+                              {r.agentCode}
+                            </td>
+                            <td
+                              className="border border-black py-1 px-2 font-sans font-medium text-black truncate max-w-[130px] text-left"
+                              title={r.agentName}
+                            >
+                              {r.agentName || "—"}
+                            </td>
+                            <td className="border border-black py-1 px-2 text-right text-black">
+                              {r.salesQty.toLocaleString()}
+                            </td>
+                            <td className="border border-black py-1 px-2 text-right font-bold text-black">
+                              {r.returnQty.toLocaleString()}
+                            </td>
+                            <td className="border border-black py-1 px-2 text-right font-bold text-black">
+                              {r.returnPct.toFixed(2)}%
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                       <tfoot>
-                        <tr className="border-t-2 border-slate-800 font-bold bg-slate-100 text-slate-900 font-mono text-[11px]">
-                          <td colSpan={3} className="border-r border-slate-800 py-1.5 px-2 text-right font-sans">
+                        <tr className="border-t-2 border-black font-bold bg-white text-black font-mono text-[11px]">
+                          <td colSpan={3} className="border border-black py-1.5 px-2 text-right font-sans">
                             මුළු එකතුව (Total):
                           </td>
-                          <td className="border-r border-slate-800 py-1.5 px-2 text-right">
+                          <td className="border border-black py-1.5 px-2 text-right font-mono">
                             {proofTotals.sales.toLocaleString()}
                           </td>
-                          <td className="border-r border-slate-800 py-1.5 px-2 text-right text-rose-800 font-black">
+                          <td className="border border-black py-1.5 px-2 text-right font-bold font-mono">
                             {proofTotals.returns.toLocaleString()}
                           </td>
-                          <td className="py-1.5 px-2 text-right text-rose-800 font-black">
+                          <td className="border border-black py-1.5 px-2 text-right font-bold font-mono">
                             {proofTotals.returnPct.toFixed(2)}%
                           </td>
                         </tr>
@@ -1960,20 +1981,15 @@ export default function ReturnAnalysisPage() {
                 </div>
 
                 {/* Verification Sign-off */}
-                <div className="pt-2 text-[11px] sm:text-[11.5px] leading-relaxed space-y-4">
-                  <div className="text-justify text-slate-800">
-                    ඉහත දැක්වෙන්නේ මාගේ බෙදාහැරීමේ ප්‍රදේශයේ අදාළ දිනට අනුමත {returnThreshold}% සීමාව ඉක්මවා ආපසු එවුම් (Return) සිදුකළ අලෙවි නියෝජිතයින්ගේ සත්‍ය තොරතුරු බවට සහතික කරමි. මෙම තොරතුරු නිල ලිපියට සාක්ෂි අනුබද්ධයක් (Proof Attachment) ලෙස ඉදිරිපත් කරමි.
+                <div className="pt-3 text-[11px] sm:text-[11.5px] leading-relaxed text-black space-y-4">
+                  <div className="text-justify text-black">
+                    ඉහත දැක්වෙන්නේ මාගේ බෙදාහැරීමේ ප්‍රදේශයේ අදාළ දිනට ආපසු එවුම් (Return) සිදුකළ අලෙවි නියෝජිතයින්ගේ සත්‍ය තොරතුරු බවට සහතික කරමි. මෙම තොරතුරු නිල ලිපියට සාක්ෂි අනුබද්ධයක් (Proof Attachment) ලෙස ඉදිරිපත් කරමි.
                   </div>
-                  <div className="flex justify-between items-end pt-3">
+                  <div className="flex justify-end pt-3">
                     <div className="text-center space-y-1">
-                      <div className="border-b border-dotted border-slate-700 w-44 mx-auto" />
-                      <div className="font-bold text-slate-900">දිස්ත්‍රික් බෙදාහැරීමේ අලෙවි නියෝජිත</div>
-                      <div className="text-[10px] text-slate-500 font-mono">({letterAgentName} - {letterAgentCode})</div>
-                    </div>
-                    <div className="text-center space-y-1">
-                      <div className="border-b border-dotted border-slate-700 w-44 mx-auto" />
-                      <div className="font-bold text-slate-900">DLB විකුණුම් අංශයේ සටහන</div>
-                      <div className="text-[10px] text-slate-500">සහකාර සාමාන්‍යාධිකාරී (විකුණුම්)</div>
+                      <div className="border-b border-dotted border-black w-48 mx-auto" />
+                      <div className="font-bold text-black">දිස්ත්‍රික් බෙදාහැරීමේ අලෙවි නියෝජිත</div>
+                      <div className="text-[10px] text-black font-mono">({letterAgentName} - {letterAgentCode})</div>
                     </div>
                   </div>
                 </div>
@@ -1990,10 +2006,10 @@ export default function ReturnAnalysisPage() {
               <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
                 <div>
                   <h2 className="text-base sm:text-lg font-black text-slate-900">
-                    Analysis Controls & Thresholds
+                    Analysis Controls
                   </h2>
                   <p className="text-xs text-slate-500 font-medium">
-                    Set analysis timeframe and excess return limits
+                    Select anchor date; database records and returns load automatically
                   </p>
                 </div>
 
@@ -2020,105 +2036,25 @@ export default function ReturnAnalysisPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Date Picker */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
-                    <Calendar className="w-4 h-4 text-purple-600" />
-                    Anchor Date
-                  </label>
-                  <input
-                    type="date"
-                    value={selectedDate}
-                    onChange={(e) => {
-                      setSelectedDate(e.target.value);
-                      setAllAgentResults([]);
-                      setExcludedAgents(new Set());
-                    }}
-                    className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3.5 py-2 text-sm font-mono font-bold text-slate-900 focus:outline-none focus:border-purple-600 shadow-2xs"
-                  />
-                  <div className="text-[11px] text-slate-500">
-                    Range: <span className="font-bold text-slate-700">{activeDateRange.start}</span> to{" "}
-                    <span className="font-bold text-slate-700">{activeDateRange.end}</span>
-                  </div>
-                </div>
-
-                {/* Threshold */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-rose-600" />
-                    Return Threshold (%)
-                  </label>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="relative flex items-center">
-                      <input
-                        type="number"
-                        min="0.1"
-                        max="100"
-                        step="0.5"
-                        value={returnThreshold}
-                        onChange={(e) => void handleThresholdChange(Number(e.target.value))}
-                        className="w-24 rounded-2xl border-2 border-slate-200 bg-white px-3 py-1.5 text-sm font-mono font-bold text-slate-900 focus:outline-none focus:border-rose-600 shadow-2xs pr-6"
-                      />
-                      <span className="absolute right-2 text-xs font-bold text-slate-500 pointer-events-none">%</span>
-                    </div>
-
-                    {/* Quick Presets */}
-                    <div className="flex items-center gap-1">
-                      {[5.0, 7.5, 10.0].map((preset) => (
-                        <button
-                          key={preset}
-                          type="button"
-                          onClick={() => void handleThresholdChange(preset)}
-                          className={`px-2 py-0.5 rounded text-[11px] font-bold border cursor-pointer transition-all ${
-                            returnThreshold === preset
-                              ? "bg-rose-600 text-white border-rose-600 shadow-2xs"
-                              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                          }`}
-                        >
-                          {preset}%
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Cloud Status Badge */}
-                    <div className="flex items-center">
-                      {isSavingThresholdCloud ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                          <RefreshCw className="w-3 h-3 animate-spin text-amber-600" />
-                          <span>Saving…</span>
-                        </span>
-                      ) : thresholdCloudSuccess ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          <span>Saved on Cloud ✓</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
-                          <Cloud className="w-3 h-3 text-slate-400" />
-                          <span>Cloud Synced</span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-slate-500 pt-0.5">
-                    <b>Statutory Limits:</b> Lagna, Super Ball &amp; Kapruka permit up to <b>10%</b>; other lotteries are limited to <b>5%</b>.
-                  </p>
-                  <div className="flex items-center gap-2 pt-1">
-                    <input
-                      type="checkbox"
-                      id="showOnlyExceededCheck"
-                      checked={showOnlyExceeded}
-                      onChange={(e) => setShowOnlyExceeded(e.target.checked)}
-                      className="h-4 w-4 rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
-                    />
-                    <label
-                      htmlFor="showOnlyExceededCheck"
-                      className="text-xs text-slate-700 font-bold select-none cursor-pointer"
-                    >
-                      Show only agents exceeding {returnThreshold}%
-                    </label>
-                  </div>
+              {/* Date Picker */}
+              <div className="space-y-1.5 max-w-sm">
+                <label className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                  <Calendar className="w-4 h-4 text-purple-600" />
+                  Anchor Date
+                </label>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => {
+                    setSelectedDate(e.target.value);
+                    setAllAgentResults([]);
+                    setExcludedAgents(new Set());
+                  }}
+                  className="w-full rounded-2xl border-2 border-slate-200 bg-white px-3.5 py-2 text-sm font-mono font-bold text-slate-900 focus:outline-none focus:border-purple-600 shadow-2xs"
+                />
+                <div className="text-[11px] text-slate-500">
+                  Range: <span className="font-bold text-slate-700">{activeDateRange.start}</span> to{" "}
+                  <span className="font-bold text-slate-700">{activeDateRange.end}</span>
                 </div>
               </div>
 
@@ -2137,56 +2073,64 @@ export default function ReturnAnalysisPage() {
                   <div className="bg-white rounded-xl p-2.5 border border-purple-100 flex justify-between items-center">
                     <span className="text-slate-600">Sales Summary:</span>
                     <span className="font-bold text-slate-900 font-mono">
-                      {dbErpFiles.length} files
+                      {isLoadingDbFiles ? "…" : `${dbErpFiles.length} files`}
                     </span>
                   </div>
                   <div className="bg-white rounded-xl p-2.5 border border-purple-100 flex justify-between items-center">
                     <span className="text-slate-600">Return Files:</span>
                     <span className="font-bold text-slate-900 font-mono">
-                      {dbReturnFiles.length} files
+                      {isLoadingDbFiles ? "…" : `${dbReturnFiles.length} files`}
                     </span>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => fetchAndProcessReturnsForDate(selectedDate, dbReturnFiles)}
-                    disabled={isFetchingDateReturns || dbReturnFiles.length === 0}
-                    className="py-2.5 px-3.5 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-900 border border-purple-300 text-xs font-bold shadow-2xs transition flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    {isFetchingDateReturns ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin text-purple-700" />
-                        <span>Fetching Returns…</span>
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4 text-purple-700" />
-                        <span>Fetch Returns ({dbReturnFiles.length} files)</span>
-                      </>
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleLoadSavedAndRun}
-                    disabled={isBusy || activeErpFiles.length === 0}
-                    className="py-2.5 px-3.5 rounded-xl bg-purple-700 hover:bg-purple-800 disabled:opacity-50 text-white text-xs font-bold shadow-xs transition flex items-center justify-center gap-2"
-                  >
-                    {isFetchingSaved ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Running Analysis…</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="w-4 h-4" />
-                        <span>Full Sales vs Returns Analysis</span>
-                      </>
-                    )}
-                  </button>
-                </div>
+                {/* Auto Status & Error Messages */}
+                {isLoadingDbFiles || isFetchingSaved || isFetchingDateReturns ? (
+                  <div className="py-2.5 px-3 rounded-xl bg-purple-100/70 border border-purple-200 text-purple-900 text-xs font-semibold flex items-center justify-center gap-2">
+                    <RefreshCw className="w-4 h-4 animate-spin text-purple-700" />
+                    <span>
+                      {isLoadingDbFiles
+                        ? `Checking database files for ${selectedDate}…`
+                        : isFetchingSaved
+                        ? `Automatically loading & analyzing files for ${selectedDate}…`
+                        : `Populating return records for ${selectedDate}…`}
+                    </span>
+                  </div>
+                ) : !isLoadingDbFiles && dbErpFiles.length === 0 && dbReturnFiles.length === 0 ? (
+                  <div className="py-3 px-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>No files found for {selectedDate}</span>
+                    </div>
+                    <p className="text-[11px] text-amber-700 pl-5 leading-normal">
+                      No ERP sales or return files exist in the database for this date. Please select another date from the date picker above, or upload Excel files manually below.
+                    </p>
+                  </div>
+                ) : !isLoadingDbFiles && dbErpFiles.length > 0 && dbReturnFiles.length === 0 ? (
+                  <div className="py-3 px-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>
+                      Found {dbErpFiles.length} sales files, but no return files were uploaded for {selectedDate}. Return analysis requires return sheets.
+                    </span>
+                  </div>
+                ) : !isLoadingDbFiles && dbReturnFiles.length > 0 && dbErpFiles.length === 0 ? (
+                  <div className="py-3 px-3.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+                    <span>
+                      Notice letter blanks updated with {dbReturnFiles.length} return files. No ERP sales summary found for {selectedDate} to calculate agent percentages.
+                    </span>
+                  </div>
+                ) : allAgentResults.length > 0 ? (
+                  <div className="py-2 px-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>
+                        Analysis loaded automatically ({allAgentResults.length} agents analyzed)
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-emerald-600 font-mono">Auto Loaded ✓</span>
+                  </div>
+                ) : null}
               </div>
 
 
@@ -2414,8 +2358,8 @@ export default function ReturnAnalysisPage() {
                   <div className="font-semibold text-slate-700">No agents to display</div>
                   <p className="text-slate-400 max-w-sm mx-auto">
                     {allAgentResults.length > 0
-                      ? `No agents exceed the ${returnThreshold}% return threshold. Uncheck "Show only agents exceeding limit" to view all.`
-                      : "Run analysis using saved database files or upload Excel summaries to begin."}
+                      ? "No agents to display."
+                      : "Database files are automatically analyzed when available. You can also upload Excel summaries manually."}
                   </p>
                 </div>
               ) : (
