@@ -764,8 +764,8 @@ export default function ReturnAnalysisPage() {
   // Active / Selected Agent for Letter Preview
   const [selectedAgent, setSelectedAgent] = useState<AgentResultRow | null>(null);
   const [isDownloadingLetter, setIsDownloadingLetter] = useState<boolean>(false);
-  const [showLetterSettings, setShowLetterSettings] = useState<boolean>(false);
   const [showRightPanel, setShowRightPanel] = useState<boolean>(false);
+  const [rightPanelTab, setRightPanelTab] = useState<"styling" | "fields" | "data">("styling");
 
   // Customizable Letter Metadata
   const [letterAgentName, setLetterAgentName] = useState<string>("එස් ඩබ් ඕ සිල්වා");
@@ -778,7 +778,6 @@ export default function ReturnAnalysisPage() {
   const [showDigitalSignatures, setShowDigitalSignatures] = useState<boolean>(true);
 
   // Document Styling & Layout Customization
-  const [settingsActiveTab, setSettingsActiveTab] = useState<"fields" | "styling">("fields");
   const [docFontSize, setDocFontSize] = useState<number>(12.5);
   const [docFontFamily, setDocFontFamily] = useState<"serif" | "sans" | "mono">("serif");
   const [docLineHeight, setDocLineHeight] = useState<number>(1.45);
@@ -1750,7 +1749,9 @@ export default function ReturnAnalysisPage() {
           <div
             className={`space-y-3.5 print-clean-container ${
               showRightPanel
-                ? "lg:col-span-5 xl:col-span-5 lg:sticky lg:top-4 w-full"
+                ? rightPanelTab === "data"
+                  ? "lg:col-span-5 xl:col-span-5 lg:sticky lg:top-4 w-full"
+                  : "lg:col-span-6 xl:col-span-6 lg:sticky lg:top-4 w-full"
                 : "w-full max-w-[620px]"
             }`}
           >
@@ -1866,19 +1867,19 @@ export default function ReturnAnalysisPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (showLetterSettings && settingsActiveTab === "fields") {
-                      setShowLetterSettings(false);
+                    if (showRightPanel && rightPanelTab === "fields") {
+                      setShowRightPanel(false);
                     } else {
-                      setShowLetterSettings(true);
-                      setSettingsActiveTab("fields");
+                      setShowRightPanel(true);
+                      setRightPanelTab("fields");
                     }
                   }}
                   className={`p-2 rounded-xl border text-xs font-bold transition flex items-center gap-1 ${
-                    showLetterSettings && settingsActiveTab === "fields"
+                    showRightPanel && rightPanelTab === "fields"
                       ? "bg-blue-600 text-white border-blue-600 shadow-xs"
                       : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
                   }`}
-                  title="Customize Letter Text & Fields"
+                  title="Customize Letter Text & Fields on Right Panel"
                 >
                   <Settings className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Fields</span>
@@ -1887,22 +1888,43 @@ export default function ReturnAnalysisPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (showLetterSettings && settingsActiveTab === "styling") {
-                      setShowLetterSettings(false);
+                    if (showRightPanel && rightPanelTab === "styling") {
+                      setShowRightPanel(false);
                     } else {
-                      setShowLetterSettings(true);
-                      setSettingsActiveTab("styling");
+                      setShowRightPanel(true);
+                      setRightPanelTab("styling");
                     }
                   }}
                   className={`p-2 rounded-xl border text-xs font-bold transition flex items-center gap-1 ${
-                    showLetterSettings && settingsActiveTab === "styling"
+                    showRightPanel && rightPanelTab === "styling"
                       ? "bg-purple-600 text-white border-purple-600 shadow-xs"
                       : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
                   }`}
-                  title="Customize Fonts, Line Heights, Margins, Signatures & Stamp Layout"
+                  title="Customize Fonts, Line Heights, Margins, Signatures on Right Panel"
                 >
                   <SlidersHorizontal className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Styles</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (showRightPanel && rightPanelTab === "data") {
+                      setShowRightPanel(false);
+                    } else {
+                      setShowRightPanel(true);
+                      setRightPanelTab("data");
+                    }
+                  }}
+                  className={`p-2 rounded-xl border text-xs font-bold transition flex items-center gap-1 ${
+                    showRightPanel && rightPanelTab === "data"
+                      ? "bg-slate-900 text-white border-slate-900 shadow-xs"
+                      : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
+                  }`}
+                  title="View Return Controls, KPIs & Agents Table on Right Panel"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Data</span>
                 </button>
 
                 <button
@@ -1941,448 +1963,6 @@ export default function ReturnAnalysisPage() {
                 </button>
               </div>
             </div>
-
-            {/* Quick Letter Customizer Drawer */}
-            {showLetterSettings && (
-              <div className="rounded-2xl border border-blue-200 bg-white p-4 space-y-4 text-xs animate-in fade-in duration-100 shadow-sm no-print">
-                {/* Header & Tabs */}
-                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                  <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
-                    <button
-                      type="button"
-                      onClick={() => setSettingsActiveTab("fields")}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                        settingsActiveTab === "fields"
-                          ? "bg-white text-blue-900 shadow-xs"
-                          : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    >
-                      <Settings className="w-3.5 h-3.5" />
-                      <span>Details &amp; Fields</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSettingsActiveTab("styling")}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                        settingsActiveTab === "styling"
-                          ? "bg-purple-600 text-white shadow-xs"
-                          : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    >
-                      <SlidersHorizontal className="w-3.5 h-3.5" />
-                      <span>Styles &amp; Spacing</span>
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {settingsActiveTab === "styling" && (
-                      <button
-                        type="button"
-                        onClick={resetDocStyles}
-                        className="px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:text-purple-700 bg-slate-100 hover:bg-purple-50 rounded-lg border border-slate-200 transition flex items-center gap-1"
-                        title="Reset all font sizes, line heights, paddings and signature spacings to default"
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                        <span>Reset Defaults</span>
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setShowLetterSettings(false)}
-                      className="text-slate-400 hover:text-slate-700 font-bold px-1.5 py-1"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </div>
-
-                {settingsActiveTab === "fields" ? (
-                  /* ================= FIELDS TAB ================= */
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-600 block">District Distributor (නම)</label>
-                      <input
-                        type="text"
-                        value={letterAgentName}
-                        onChange={(e) => setLetterAgentName(e.target.value)}
-                        className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-600 block">Distributor Code (අංකය)</label>
-                      <input
-                        type="text"
-                        value={letterAgentCode}
-                        onChange={(e) => setLetterAgentCode(e.target.value)}
-                        className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-mono font-bold"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-600 block">Address Line 1</label>
-                      <input
-                        type="text"
-                        value={letterAddressLine1}
-                        onChange={(e) => setLetterAddressLine1(e.target.value)}
-                        className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-600 block">District / City</label>
-                      <input
-                        type="text"
-                        value={letterDistrict}
-                        onChange={(e) => setLetterDistrict(e.target.value)}
-                        className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-600 block">Officer Name</label>
-                      <input
-                        type="text"
-                        value={letterOfficerName}
-                        onChange={(e) => setLetterOfficerName(e.target.value)}
-                        className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
-                      />
-                    </div>
-                    {activePreviewTab === "notice" ? (
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-600 block">Reason for Return (හේතුව)</label>
-                        <input
-                          type="text"
-                          value={letterReason}
-                          onChange={(e) => setLetterReason(e.target.value)}
-                          placeholder="e.g. අයහපත් කාලගුණය (වැසි) / අලෙවි නියෝජිතයින් නොපැමිණීම"
-                          className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
-                        />
-                      </div>
-                    ) : (
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-600 block">Annexure Title</label>
-                        <input
-                          type="text"
-                          value={annexureTitle}
-                          onChange={(e) => setAnnexureTitle(e.target.value)}
-                          className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
-                        />
-                      </div>
-                    )}
-
-                    <div className="col-span-2 pt-2 border-t border-slate-200 flex items-center justify-between">
-                      <label className="text-[11px] font-bold text-slate-700 flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={showDigitalSignatures}
-                          onChange={(e) => setShowDigitalSignatures(e.target.checked)}
-                          className="rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
-                        />
-                        <span>Show Official Signature &amp; Rubber Stamp (S. W. O. Silva)</span>
-                      </label>
-                      {isSilva && (
-                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                          Official Stamp Active ✓
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  /* ================= STYLES TAB ================= */
-                  <div className="space-y-4">
-                    {/* 1. Font Style & Typography Row */}
-                    <div className="bg-slate-50/80 rounded-xl p-3 border border-slate-200/80 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-black uppercase tracking-wide text-slate-700 flex items-center gap-1.5">
-                          <Type className="w-3.5 h-3.5 text-purple-600" />
-                          <span>Font Style &amp; Typography</span>
-                        </span>
-                        <span className="text-[10px] font-mono font-bold text-purple-700 bg-purple-100/60 px-2 py-0.5 rounded">
-                          {docFontFamily} · {docFontSize}px · {docLineHeight}x
-                        </span>
-                      </div>
-
-                      {/* Font Family Selection */}
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-600 block mb-1">Font Family (අකුරු විලාසය)</label>
-                        <div className="grid grid-cols-3 gap-2">
-                          {[
-                            { id: "serif", label: "Serif (සාම්ප්‍රදායික)", desc: "Formal Noto Serif" },
-                            { id: "sans", label: "Sans-Serif (නවීන)", desc: "Clean Inter / Arial" },
-                            { id: "mono", label: "Monospace", desc: "Typewriter / Mono" },
-                          ].map((font) => (
-                            <button
-                              key={font.id}
-                              type="button"
-                              onClick={() => setDocFontFamily(font.id as any)}
-                              className={`p-2 rounded-lg border text-left transition ${
-                                docFontFamily === font.id
-                                  ? "bg-purple-600 text-white border-purple-600 shadow-xs"
-                                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                              }`}
-                            >
-                              <div className="text-[11px] font-bold">{font.label}</div>
-                              <div className={`text-[9px] ${docFontFamily === font.id ? "text-purple-100" : "text-slate-400"}`}>
-                                {font.desc}
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Font Size & Line Height Sliders */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="text-[10px] font-bold text-slate-600">Font Size (අකුරු ප්‍රමාණය)</label>
-                            <span className="text-[10px] font-mono font-bold text-purple-700 bg-white px-1.5 py-0.5 rounded border border-slate-200">
-                              {docFontSize}px
-                            </span>
-                          </div>
-                          <input
-                            type="range"
-                            min="10"
-                            max="16"
-                            step="0.5"
-                            value={docFontSize}
-                            onChange={(e) => setDocFontSize(parseFloat(e.target.value))}
-                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
-                          />
-                          <div className="flex gap-1.5 mt-1.5">
-                            {[11, 12, 12.5, 13.5, 14.5].map((s) => (
-                              <button
-                                key={s}
-                                type="button"
-                                onClick={() => setDocFontSize(s)}
-                                className={`flex-1 py-0.5 text-[9px] font-mono rounded border transition ${
-                                  docFontSize === s
-                                    ? "bg-purple-100 border-purple-300 text-purple-800 font-bold"
-                                    : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                                }`}
-                              >
-                                {s}px
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="text-[10px] font-bold text-slate-600">Line Height / Spacing (පේළි පරතරය)</label>
-                            <span className="text-[10px] font-mono font-bold text-purple-700 bg-white px-1.5 py-0.5 rounded border border-slate-200">
-                              {docLineHeight}x
-                            </span>
-                          </div>
-                          <input
-                            type="range"
-                            min="1.20"
-                            max="1.85"
-                            step="0.05"
-                            value={docLineHeight}
-                            onChange={(e) => setDocLineHeight(parseFloat(e.target.value))}
-                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
-                          />
-                          <div className="flex gap-1.5 mt-1.5">
-                            {[
-                              { val: 1.25, label: "Tight" },
-                              { val: 1.45, label: "Normal" },
-                              { val: 1.65, label: "Relaxed" },
-                              { val: 1.80, label: "Loose" },
-                            ].map((h) => (
-                              <button
-                                key={h.val}
-                                type="button"
-                                onClick={() => setDocLineHeight(h.val)}
-                                className={`flex-1 py-0.5 text-[9px] rounded border transition ${
-                                  docLineHeight === h.val
-                                    ? "bg-purple-100 border-purple-300 text-purple-800 font-bold"
-                                    : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                                }`}
-                              >
-                                {h.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 2. Document Margins & Section Padding */}
-                    <div className="bg-slate-50/80 rounded-xl p-3 border border-slate-200/80 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-black uppercase tracking-wide text-slate-700">
-                          Document Padding &amp; Margins (ආන්තික පරතර)
-                        </span>
-                        <span className="text-[10px] font-mono font-bold text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200">
-                          Side: {docPaddingX}px ({Math.round((docPaddingX / 32) * 22)}mm) · Top/Btm: {docPaddingY}px
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="text-[10px] font-bold text-slate-600">Side Padding (දෙපස ආන්තිකය)</label>
-                            <span className="text-[10px] font-mono text-purple-700 font-bold">{docPaddingX}px</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="16"
-                            max="48"
-                            step="2"
-                            value={docPaddingX}
-                            onChange={(e) => setDocPaddingX(parseInt(e.target.value, 10))}
-                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
-                          />
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="text-[10px] font-bold text-slate-600">Top/Btm Padding (ඉහළ/පහළ)</label>
-                            <span className="text-[10px] font-mono text-purple-700 font-bold">{docPaddingY}px</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="16"
-                            max="48"
-                            step="2"
-                            value={docPaddingY}
-                            onChange={(e) => setDocPaddingY(parseInt(e.target.value, 10))}
-                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
-                          />
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="text-[10px] font-bold text-slate-600">Section Gap (කොටස් අතර හිඩැස)</label>
-                            <span className="text-[10px] font-mono text-purple-700 font-bold">{docSectionSpacing}px</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="8"
-                            max="26"
-                            step="2"
-                            value={docSectionSpacing}
-                            onChange={(e) => setDocSectionSpacing(parseInt(e.target.value, 10))}
-                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 3. Signature & Rubber Stamp Positioning & Size */}
-                    <div className="bg-slate-50/80 rounded-xl p-3 border border-slate-200/80 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-black uppercase tracking-wide text-slate-700">
-                          Signature &amp; Stamp Layout (අත්සන හා රබර් මුද්‍රාව)
-                        </span>
-                        {isSilva && showDigitalSignatures && (
-                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                            Digital Seal Active ✓
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="text-[10px] font-bold text-slate-600">Signature Size (අත්සනේ විශාලත්වය)</label>
-                            <span className="text-[10px] font-mono text-purple-700 font-bold">{sigScale}px</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="90"
-                            max="210"
-                            step="5"
-                            value={sigScale}
-                            onChange={(e) => setSigScale(parseInt(e.target.value, 10))}
-                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
-                          />
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="text-[10px] font-bold text-slate-600">Signature Offset (අත්සන ඉහළ/පහළ)</label>
-                            <span className="text-[10px] font-mono text-purple-700 font-bold">{sigOffsetY}px</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="-50"
-                            max="0"
-                            step="2"
-                            value={sigOffsetY}
-                            onChange={(e) => setSigOffsetY(parseInt(e.target.value, 10))}
-                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
-                          />
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="text-[10px] font-bold text-slate-600">Signature Block Space (ඉහළ පරතරය)</label>
-                            <span className="text-[10px] font-mono text-purple-700 font-bold">{sigTopSpace}px</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="8"
-                            max="44"
-                            step="2"
-                            value={sigTopSpace}
-                            onChange={(e) => setSigTopSpace(parseInt(e.target.value, 10))}
-                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 border-t border-slate-200/70">
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="text-[10px] font-bold text-slate-600">Stamp Size (මුද්‍රාවේ විශාලත්වය)</label>
-                            <span className="text-[10px] font-mono text-purple-700 font-bold">{stampScale}px</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="90"
-                            max="220"
-                            step="5"
-                            value={stampScale}
-                            onChange={(e) => setStampScale(parseInt(e.target.value, 10))}
-                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
-                          />
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="text-[10px] font-bold text-slate-600">Stamp Tilt / Rotation (ඇලවීම)</label>
-                            <span className="text-[10px] font-mono text-purple-700 font-bold">{stampRotation}°</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="-10"
-                            max="10"
-                            step="1"
-                            value={stampRotation}
-                            onChange={(e) => setStampRotation(parseInt(e.target.value, 10))}
-                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
-                          />
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="text-[10px] font-bold text-slate-600">Officer Sig Space (නිලධාරී අත්සන් හිඩැස)</label>
-                            <span className="text-[10px] font-mono text-purple-700 font-bold">{officerSigSpace}px</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="8"
-                            max="44"
-                            step="2"
-                            value={officerSigSpace}
-                            onChange={(e) => setOfficerSigSpace(parseInt(e.target.value, 10))}
-                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Pristine A4 Document Sheets Container */}
             <div className="overflow-x-auto rounded-3xl p-1 bg-slate-200/60 shadow-inner flex flex-col items-center gap-6 print-clean-container">
@@ -2779,56 +2359,542 @@ export default function ReturnAnalysisPage() {
           </div>
 
           {/* =========================================================
-              RIGHT SIDE: REST COMPONENTS (CONTROLS, STATS & AGENTS TABLE)
+              RIGHT SIDE: REST COMPONENTS (CONTROLS, STYLING, FIELDS & AGENTS TABLE)
               ========================================================= */}
           {showRightPanel && (
-            <div className="lg:col-span-7 xl:col-span-7 space-y-5 no-print animate-in fade-in duration-200 w-full">
-              {/* 1. Report Period & Configuration Card */}
-              <div className="rounded-3xl bg-white p-5 sm:p-6 border border-slate-200 shadow-sm space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                  <div>
-                    <h2 className="text-base sm:text-lg font-black text-slate-900">
-                      Analysis Controls
-                    </h2>
-                    <p className="text-xs text-slate-500 font-medium">
-                      Select anchor date; database records and returns load automatically
-                    </p>
-                  </div>
+            <div
+              className={`space-y-4 no-print animate-in fade-in duration-200 w-full ${
+                rightPanelTab === "data"
+                  ? "lg:col-span-7 xl:col-span-7"
+                  : "lg:col-span-6 xl:col-span-6"
+              }`}
+            >
+              {/* Right Panel Main Header & Tabs */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-xs flex flex-wrap items-center justify-between gap-2">
+                <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setRightPanelTab("styling")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                      rightPanelTab === "styling"
+                        ? "bg-purple-600 text-white shadow-xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                    <span>Styles &amp; Spacing</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRightPanelTab("fields")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                      rightPanelTab === "fields"
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    <span>Letter Details</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRightPanelTab("data")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                      rightPanelTab === "data"
+                        ? "bg-slate-900 text-white shadow-xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Data &amp; Agents ({allAgentResults.length})</span>
+                  </button>
+                </div>
 
-                  <div className="flex items-center gap-2">
-                    {/* Mode Selector */}
-                    <div className="inline-flex rounded-2xl bg-slate-100 p-1 border border-slate-200">
-                      {(["daily", "weekly", "monthly"] as const).map((mode) => (
-                        <button
-                          key={mode}
-                          type="button"
-                          onClick={() => {
-                            setReportMode(mode);
-                            setAllAgentResults([]);
-                            setExcludedAgents(new Set());
-                          }}
-                          className={`px-3 py-1.5 text-xs font-bold rounded-xl transition ${
-                            reportMode === mode
-                              ? "bg-white text-slate-900 shadow-xs"
-                              : "text-slate-500 hover:text-slate-900"
-                          }`}
-                        >
-                          {mode.toUpperCase()}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Collapse Right Panel Button */}
+                <div className="flex items-center gap-2">
+                  {rightPanelTab === "styling" && (
                     <button
                       type="button"
-                      onClick={() => setShowRightPanel(false)}
-                      className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition"
-                      title="Collapse Controls Panel"
+                      onClick={resetDocStyles}
+                      className="px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:text-purple-700 bg-slate-100 hover:bg-purple-50 rounded-lg border border-slate-200 transition flex items-center gap-1"
+                      title="Reset all font sizes, line heights, paddings and signature spacings to default"
                     >
-                      ✕
+                      <RotateCcw className="w-3 h-3" />
+                      <span>Reset Defaults</span>
                     </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowRightPanel(false)}
+                    className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition font-bold"
+                    title="Close panel"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* TAB 1: STYLES & SPACING */}
+              {rightPanelTab === "styling" && (
+                <div className="space-y-4 animate-in fade-in duration-150">
+                  {/* 1. Font Style & Typography Card */}
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3.5 shadow-xs">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <span className="text-xs font-black uppercase tracking-wide text-slate-800 flex items-center gap-1.5">
+                        <Type className="w-4 h-4 text-purple-600" />
+                        <span>Font Style &amp; Typography</span>
+                      </span>
+                      <span className="text-[10px] font-mono font-bold text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-lg">
+                        {docFontFamily} · {docFontSize}px · {docLineHeight}x
+                      </span>
+                    </div>
+
+                    {/* Font Family Selection */}
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1.5">
+                        Font Family (අකුරු විලාසය)
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { id: "serif", label: "Serif (සාම්ප්‍රදායික)", desc: "Formal Noto Serif" },
+                          { id: "sans", label: "Sans-Serif (නවීන)", desc: "Clean Inter / Arial" },
+                          { id: "mono", label: "Monospace", desc: "Typewriter / Mono" },
+                        ].map((font) => (
+                          <button
+                            key={font.id}
+                            type="button"
+                            onClick={() => setDocFontFamily(font.id as any)}
+                            className={`p-2.5 rounded-xl border text-left transition ${
+                              docFontFamily === font.id
+                                ? "bg-purple-600 text-white border-purple-600 shadow-xs"
+                                : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+                            }`}
+                          >
+                            <div className="text-[11px] font-bold">{font.label}</div>
+                            <div
+                              className={`text-[9px] ${
+                                docFontFamily === font.id ? "text-purple-100" : "text-slate-400"
+                              }`}
+                            >
+                              {font.desc}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Font Size & Line Height Sliders */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
+                      <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80">
+                        <div className="flex justify-between items-center mb-1.5">
+                          <label className="text-[11px] font-bold text-slate-700">
+                            Font Size (අකුරු ප්‍රමාණය)
+                          </label>
+                          <span className="text-[10px] font-mono font-bold text-purple-700 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                            {docFontSize}px
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="10"
+                          max="16"
+                          step="0.5"
+                          value={docFontSize}
+                          onChange={(e) => setDocFontSize(parseFloat(e.target.value))}
+                          className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                        />
+                        <div className="flex gap-1 mt-2">
+                          {[11, 12, 12.5, 13.5, 14.5].map((s) => (
+                            <button
+                              key={s}
+                              type="button"
+                              onClick={() => setDocFontSize(s)}
+                              className={`flex-1 py-1 text-[10px] font-mono rounded-lg border transition ${
+                                docFontSize === s
+                                  ? "bg-purple-100 border-purple-300 text-purple-800 font-bold"
+                                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              {s}px
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80">
+                        <div className="flex justify-between items-center mb-1.5">
+                          <label className="text-[11px] font-bold text-slate-700">
+                            Line Height (පේළි පරතරය)
+                          </label>
+                          <span className="text-[10px] font-mono font-bold text-purple-700 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                            {docLineHeight}x
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="1.20"
+                          max="1.85"
+                          step="0.05"
+                          value={docLineHeight}
+                          onChange={(e) => setDocLineHeight(parseFloat(e.target.value))}
+                          className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                        />
+                        <div className="flex gap-1 mt-2">
+                          {[
+                            { val: 1.25, label: "Tight" },
+                            { val: 1.45, label: "Normal" },
+                            { val: 1.65, label: "Relaxed" },
+                            { val: 1.80, label: "Loose" },
+                          ].map((h) => (
+                            <button
+                              key={h.val}
+                              type="button"
+                              onClick={() => setDocLineHeight(h.val)}
+                              className={`flex-1 py-1 text-[10px] rounded-lg border transition ${
+                                docLineHeight === h.val
+                                  ? "bg-purple-100 border-purple-300 text-purple-800 font-bold"
+                                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              {h.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 2. Document Margins & Section Padding */}
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3.5 shadow-xs">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <span className="text-xs font-black uppercase tracking-wide text-slate-800">
+                        Page Margins &amp; Spacing (ආන්තික පරතර)
+                      </span>
+                      <span className="text-[10px] font-mono font-bold text-slate-600 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
+                        Side: {docPaddingX}px · Top: {docPaddingY}px · Gap: {docSectionSpacing}px
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-[10px] font-bold text-slate-600">Side Margins (පැති)</label>
+                          <span className="text-[10px] font-mono text-purple-700 font-bold">{docPaddingX}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="12"
+                          max="56"
+                          step="2"
+                          value={docPaddingX}
+                          onChange={(e) => setDocPaddingX(parseInt(e.target.value, 10))}
+                          className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                        />
+                      </div>
+
+                      <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-[10px] font-bold text-slate-600">Top/Btm Margins (ඉහළ/පහළ)</label>
+                          <span className="text-[10px] font-mono text-purple-700 font-bold">{docPaddingY}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="14"
+                          max="48"
+                          step="2"
+                          value={docPaddingY}
+                          onChange={(e) => setDocPaddingY(parseInt(e.target.value, 10))}
+                          className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                        />
+                      </div>
+
+                      <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-[10px] font-bold text-slate-600">Section Gap (හිඩැස)</label>
+                          <span className="text-[10px] font-mono text-purple-700 font-bold">{docSectionSpacing}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="6"
+                          max="32"
+                          step="2"
+                          value={docSectionSpacing}
+                          onChange={(e) => setDocSectionSpacing(parseInt(e.target.value, 10))}
+                          className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 3. Signature & Stamp Layout */}
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3.5 shadow-xs">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <span className="text-xs font-black uppercase tracking-wide text-slate-800">
+                        Signature &amp; Stamp Layout (අත්සන හා රබර් මුද්‍රාව)
+                      </span>
+                      {isSilva && showDigitalSignatures && (
+                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                          Digital Seal Active ✓
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-[10px] font-bold text-slate-600">Signature Size (අත්සනේ විශාලත්වය)</label>
+                          <span className="text-[10px] font-mono text-purple-700 font-bold">{sigScale}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="80"
+                          max="220"
+                          step="5"
+                          value={sigScale}
+                          onChange={(e) => setSigScale(parseInt(e.target.value, 10))}
+                          className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                        />
+                      </div>
+
+                      <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-[10px] font-bold text-slate-600">Signature Offset (ඉහළ/පහළ)</label>
+                          <span className="text-[10px] font-mono text-purple-700 font-bold">{sigOffsetY}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-50"
+                          max="0"
+                          step="2"
+                          value={sigOffsetY}
+                          onChange={(e) => setSigOffsetY(parseInt(e.target.value, 10))}
+                          className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                        />
+                      </div>
+
+                      <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-[10px] font-bold text-slate-600">Signature Space (ඉහළ පරතරය)</label>
+                          <span className="text-[10px] font-mono text-purple-700 font-bold">{sigTopSpace}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="8"
+                          max="44"
+                          step="2"
+                          value={sigTopSpace}
+                          onChange={(e) => setSigTopSpace(parseInt(e.target.value, 10))}
+                          className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-100">
+                      <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-[10px] font-bold text-slate-600">Stamp Size (මුද්‍රාවේ විශාලත්වය)</label>
+                          <span className="text-[10px] font-mono text-purple-700 font-bold">{stampScale}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="90"
+                          max="220"
+                          step="5"
+                          value={stampScale}
+                          onChange={(e) => setStampScale(parseInt(e.target.value, 10))}
+                          className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                        />
+                      </div>
+
+                      <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-[10px] font-bold text-slate-600">Stamp Tilt / Rotation (ඇලවීම)</label>
+                          <span className="text-[10px] font-mono text-purple-700 font-bold">{stampRotation}°</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-10"
+                          max="10"
+                          step="1"
+                          value={stampRotation}
+                          onChange={(e) => setStampRotation(parseInt(e.target.value, 10))}
+                          className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                        />
+                      </div>
+
+                      <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-[10px] font-bold text-slate-600">Officer Sig Space (නිලධාරී හිඩැස)</label>
+                          <span className="text-[10px] font-mono text-purple-700 font-bold">{officerSigSpace}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="8"
+                          max="44"
+                          step="2"
+                          value={officerSigSpace}
+                          onChange={(e) => setOfficerSigSpace(parseInt(e.target.value, 10))}
+                          className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
+              )}
+
+              {/* TAB 2: LETTER DETAILS & FIELDS */}
+              {rightPanelTab === "fields" && (
+                <div className="rounded-2xl border border-blue-200 bg-white p-5 space-y-4 text-xs animate-in fade-in duration-150 shadow-xs">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                    <span className="text-xs font-black uppercase tracking-wide text-slate-800 flex items-center gap-1.5">
+                      <Settings className="w-4 h-4 text-blue-600" />
+                      <span>Letter Details &amp; Metadata</span>
+                    </span>
+                    <span className="text-[10px] font-mono font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-lg">
+                      District: {letterDistrict}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">District Distributor (නම)</label>
+                      <input
+                        type="text"
+                        value={letterAgentName}
+                        onChange={(e) => setLetterAgentName(e.target.value)}
+                        className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs font-medium focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Distributor Code (අංකය)</label>
+                      <input
+                        type="text"
+                        value={letterAgentCode}
+                        onChange={(e) => setLetterAgentCode(e.target.value)}
+                        className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs font-mono font-bold focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Address Line 1</label>
+                      <input
+                        type="text"
+                        value={letterAddressLine1}
+                        onChange={(e) => setLetterAddressLine1(e.target.value)}
+                        className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Address Line 2</label>
+                      <input
+                        type="text"
+                        value={letterAddressLine2}
+                        onChange={(e) => setLetterAddressLine2(e.target.value)}
+                        className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">District / City</label>
+                      <input
+                        type="text"
+                        value={letterDistrict}
+                        onChange={(e) => setLetterDistrict(e.target.value)}
+                        className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Officer Name</label>
+                      <input
+                        type="text"
+                        value={letterOfficerName}
+                        onChange={(e) => setLetterOfficerName(e.target.value)}
+                        className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      {activePreviewTab === "notice" ? (
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                            Reason for Return (හේතුව)
+                          </label>
+                          <input
+                            type="text"
+                            value={letterReason}
+                            onChange={(e) => setLetterReason(e.target.value)}
+                            placeholder="e.g. අයහපත් කාලගුණය (වැසි) / අලෙවි නියෝජිතයින් නොපැමිණීම"
+                            className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                          />
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-700 block mb-1">Annexure Title</label>
+                          <input
+                            type="text"
+                            value={annexureTitle}
+                            onChange={(e) => setAnnexureTitle(e.target.value)}
+                            className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showDigitalSignatures}
+                        onChange={(e) => setShowDigitalSignatures(e.target.checked)}
+                        className="rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                      />
+                      <span>Show Official Signature &amp; Rubber Stamp (S. W. O. Silva)</span>
+                    </label>
+                    {isSilva && (
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                        Official Stamp Active ✓
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: DATA & AGENTS */}
+              {rightPanelTab === "data" && (
+                <>
+                  {/* 1. Report Period & Configuration Card */}
+                  <div className="rounded-3xl bg-white p-5 sm:p-6 border border-slate-200 shadow-sm space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                      <div>
+                        <h2 className="text-base sm:text-lg font-black text-slate-900">
+                          Analysis Controls
+                        </h2>
+                        <p className="text-xs text-slate-500 font-medium">
+                          Select anchor date; database records and returns load automatically
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {/* Mode Selector */}
+                        <div className="inline-flex rounded-2xl bg-slate-100 p-1 border border-slate-200">
+                          {(["daily", "weekly", "monthly"] as const).map((mode) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              onClick={() => {
+                                setReportMode(mode);
+                                setAllAgentResults([]);
+                                setExcludedAgents(new Set());
+                              }}
+                              className={`px-3 py-1.5 text-xs font-bold rounded-xl transition ${
+                                reportMode === mode
+                                  ? "bg-white text-slate-900 shadow-xs"
+                                  : "text-slate-500 hover:text-slate-900"
+                              }`}
+                            >
+                              {mode.toUpperCase()}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
 
               {/* Date Picker */}
               <div className="space-y-1.5 max-w-sm">
@@ -3281,8 +3347,10 @@ export default function ReturnAnalysisPage() {
                 </div>
               )}
             </div>
-          </div>
+          </>
         )}
+      </div>
+    )}
       </div>
     </div>
   </div>
