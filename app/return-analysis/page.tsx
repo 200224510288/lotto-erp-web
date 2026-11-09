@@ -799,8 +799,8 @@ export default function ReturnAnalysisPage() {
   const [docPaddingY, setDocPaddingY] = useState<number>(20);
   const [docSectionSpacing, setDocSectionSpacing] = useState<number>(8);
   const [sigScale, setSigScale] = useState<number>(135);
-  const [sigOffsetY, setSigOffsetY] = useState<number>(-28);
-  const [sigTopSpace, setSigTopSpace] = useState<number>(14);
+  const [sigOffsetY, setSigOffsetY] = useState<number>(-42);
+  const [sigTopSpace, setSigTopSpace] = useState<number>(6);
   const [stampScale, setStampScale] = useState<number>(140);
   const [stampRotation, setStampRotation] = useState<number>(-1);
   const [officerSigSpace, setOfficerSigSpace] = useState<number>(14);
@@ -824,7 +824,9 @@ export default function ReturnAnalysisPage() {
   useEffect(() => {
     try {
       if (typeof window !== "undefined") {
-        const saved = localStorage.getItem("dlb_doc_styles_v1");
+        const savedV2 = localStorage.getItem("dlb_doc_styles_v2");
+        const savedV1 = localStorage.getItem("dlb_doc_styles_v1");
+        const saved = savedV2 || savedV1;
         if (saved) {
           const p = JSON.parse(saved);
           if (typeof p.docFontSize === "number") setDocFontSize(p.docFontSize);
@@ -834,8 +836,17 @@ export default function ReturnAnalysisPage() {
           if (typeof p.docPaddingY === "number") setDocPaddingY(p.docPaddingY);
           if (typeof p.docSectionSpacing === "number") setDocSectionSpacing(p.docSectionSpacing);
           if (typeof p.sigScale === "number") setSigScale(p.sigScale);
-          if (typeof p.sigOffsetY === "number") setSigOffsetY(p.sigOffsetY);
-          if (typeof p.sigTopSpace === "number") setSigTopSpace(p.sigTopSpace);
+          // If v2 is not yet saved, use optimized defaults (-42px offset, 6px space)
+          if (savedV2 && typeof p.sigOffsetY === "number") {
+            setSigOffsetY(p.sigOffsetY);
+          } else {
+            setSigOffsetY(-42);
+          }
+          if (savedV2 && typeof p.sigTopSpace === "number") {
+            setSigTopSpace(p.sigTopSpace);
+          } else {
+            setSigTopSpace(6);
+          }
           if (typeof p.stampScale === "number") setStampScale(p.stampScale);
           if (typeof p.stampRotation === "number") setStampRotation(p.stampRotation);
           if (typeof p.officerSigSpace === "number") setOfficerSigSpace(p.officerSigSpace);
@@ -856,7 +867,7 @@ export default function ReturnAnalysisPage() {
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem(
-          "dlb_doc_styles_v1",
+          "dlb_doc_styles_v2",
           JSON.stringify({
             docFontSize,
             docFontFamily,
@@ -902,8 +913,8 @@ export default function ReturnAnalysisPage() {
     setDocPaddingY(20);
     setDocSectionSpacing(8);
     setSigScale(135);
-    setSigOffsetY(-28);
-    setSigTopSpace(14);
+    setSigOffsetY(-42);
+    setSigTopSpace(6);
     setStampScale(140);
     setStampRotation(-1);
     setOfficerSigSpace(14);
@@ -911,7 +922,7 @@ export default function ReturnAnalysisPage() {
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem(
-          "dlb_doc_styles_v1",
+          "dlb_doc_styles_v2",
           JSON.stringify({
             docFontSize: 11.5,
             docFontFamily: "serif",
@@ -920,8 +931,8 @@ export default function ReturnAnalysisPage() {
             docPaddingY: 20,
             docSectionSpacing: 8,
             sigScale: 135,
-            sigOffsetY: -28,
-            sigTopSpace: 14,
+            sigOffsetY: -42,
+            sigTopSpace: 6,
             stampScale: 140,
             stampRotation: -1,
             officerSigSpace: 14,
@@ -2284,10 +2295,10 @@ ${letterAgentCode}`;
 
                 {/* 6. Agent Signature & Seal Block */}
                 <div
-                  className="flex justify-between items-end text-[0.95em]"
+                  className="flex justify-between items-start text-[0.95em]"
                   style={{ paddingTop: `${sigTopSpace}px` }}
                 >
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">අත්සන:</span>
                       <div className="relative inline-block w-48">
@@ -2313,7 +2324,7 @@ ${letterAgentCode}`;
                       <span className="font-mono text-xs text-slate-700"> ({letterAgentCode})</span>
                     </div>
                   </div>
-                  <div className="text-right pb-1">
+                  <div className="text-right -mt-2 pb-1">
                     {isSilva && showDigitalSignatures ? (
                       <div className="flex flex-col items-end">
                         <img
@@ -2335,7 +2346,7 @@ ${letterAgentCode}`;
                 </div>
 
                 {/* Heavy Divider */}
-                <hr className="border-t-2 border-slate-900 my-2" />
+                <hr className="border-t-2 border-slate-900 my-1.5" />
 
                 {/* 7. Field Officer Recommendation */}
                 <div className="space-y-2 text-[0.95em]">
@@ -2871,7 +2882,7 @@ ${letterAgentCode}`;
                         </div>
                         <input
                           type="range"
-                          min="-50"
+                          min="-75"
                           max="0"
                           step="2"
                           value={sigOffsetY}
@@ -2887,8 +2898,8 @@ ${letterAgentCode}`;
                         </div>
                         <input
                           type="range"
-                          min="8"
-                          max="44"
+                          min="2"
+                          max="30"
                           step="2"
                           value={sigTopSpace}
                           onChange={(e) => setSigTopSpace(parseInt(e.target.value, 10))}

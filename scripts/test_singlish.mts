@@ -312,3 +312,4 @@ console.log("3. prawahana apahasutha ->", convertSinglishToSinhala("prawahana ap
 console.log("4. gamwathura saha nayayam ->", convertSinglishToSinhala("gamwathura saha nayayam"));
 console.log("5. Custom word: karunaakarala ->", convertSinglishToSinhala("karunaakarala"));
 console.log("6. Custom word: wessaa ->", convertSinglishToSinhala("wessaa"));
+
