@@ -765,6 +765,7 @@ export default function ReturnAnalysisPage() {
   const [selectedAgent, setSelectedAgent] = useState<AgentResultRow | null>(null);
   const [isDownloadingLetter, setIsDownloadingLetter] = useState<boolean>(false);
   const [showLetterSettings, setShowLetterSettings] = useState<boolean>(false);
+  const [showRightPanel, setShowRightPanel] = useState<boolean>(false);
 
   // Customizable Letter Metadata
   const [letterAgentName, setLetterAgentName] = useState<string>("එස් ඩබ් ඕ සිල්වා");
@@ -1685,8 +1686,27 @@ export default function ReturnAnalysisPage() {
             </div>
           </div>
 
-          {/* Quick Page Links */}
+          {/* Quick Page Links & Panel Toggle */}
           <div className="flex items-center gap-2 flex-wrap text-xs">
+            <button
+              type="button"
+              onClick={() => setShowRightPanel((prev) => !prev)}
+              className={`px-3 py-1.5 rounded-xl font-bold transition shadow-xs flex items-center gap-1.5 ${
+                showRightPanel
+                  ? "bg-purple-100 text-purple-900 border border-purple-300 hover:bg-purple-200"
+                  : "bg-purple-700 hover:bg-purple-800 text-white"
+              }`}
+              title={showRightPanel ? "Collapse Controls & Agent Breakdown" : "Expand Controls & Agent Breakdown"}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>{showRightPanel ? "Hide Controls Panel" : "Controls & Breakdown"}</span>
+              {showRightPanel ? (
+                <ChevronUp className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5" />
+              )}
+            </button>
+
             <Link
               href="/returns"
               className="px-3 py-1.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold transition shadow-xs"
@@ -1715,48 +1735,82 @@ export default function ReturnAnalysisPage() {
         </div>
       </div>
 
-      {/* Main Two-Pane Split Layout */}
+      {/* Main Layout Container: Single Centered Column (when hidden) or Two-Pane Grid (when expanded) */}
       <div className="w-full px-4 sm:px-6 lg:px-8 py-6 print-clean-container">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start print-clean-container">
+        <div
+          className={`gap-6 items-start print-clean-container transition-all ${
+            showRightPanel
+              ? "grid grid-cols-1 lg:grid-cols-12"
+              : "flex flex-col items-center max-w-4xl mx-auto"
+          }`}
+        >
           {/* =========================================================
               LEFT SIDE: A4 DOCUMENT PREVIEWS (1. NOTICE LETTER & 2. AGENT PROOF ANNEXURE)
               ========================================================= */}
-          <div className="lg:col-span-5 xl:col-span-5 space-y-3.5 lg:sticky lg:top-4 print-clean-container">
-            {/* 2 Previews Switcher Tabs */}
-            <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-white border border-slate-200 shadow-2xs no-print">
-              <button
-                type="button"
-                onClick={() => setActivePreviewTab("notice")}
-                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition flex items-center justify-center gap-2 ${
-                  activePreviewTab === "notice"
-                    ? "bg-purple-700 text-white shadow-xs"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-                }`}
-              >
-                <FileText className="w-4 h-4" />
-                <span>1. Notice Letter (District Total)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActivePreviewTab("proof")}
-                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition flex items-center justify-center gap-2 ${
-                  activePreviewTab === "proof"
-                    ? "bg-rose-700 text-white shadow-xs"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-                }`}
-              >
-                <CheckSquare className="w-4 h-4" />
-                <span>2. Agent Proof Annexure</span>
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
-                    activePreviewTab === "proof"
-                      ? "bg-white text-rose-800"
-                      : "bg-rose-100 text-rose-800"
+          <div
+            className={`space-y-3.5 print-clean-container ${
+              showRightPanel
+                ? "lg:col-span-5 xl:col-span-5 lg:sticky lg:top-4 w-full"
+                : "w-full max-w-[620px]"
+            }`}
+          >
+            {/* 2 Previews Switcher Tabs & Right Panel Toggle */}
+            <div className="flex flex-wrap items-center justify-between gap-2 no-print">
+              <div className="flex-1 flex items-center gap-1.5 p-1 rounded-2xl bg-white border border-slate-200 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setActivePreviewTab("notice")}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition flex items-center justify-center gap-2 ${
+                    activePreviewTab === "notice"
+                      ? "bg-purple-700 text-white shadow-xs"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
                   }`}
                 >
-                  {proofSelectedAgents.size}
-                </span>
+                  <FileText className="w-4 h-4" />
+                  <span>1. Notice Letter</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActivePreviewTab("proof")}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition flex items-center justify-center gap-2 ${
+                    activePreviewTab === "proof"
+                      ? "bg-rose-700 text-white shadow-xs"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                  }`}
+                >
+                  <CheckSquare className="w-4 h-4" />
+                  <span>2. Proof Annexure</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                      activePreviewTab === "proof"
+                        ? "bg-white text-rose-800"
+                        : "bg-rose-100 text-rose-800"
+                    }`}
+                  >
+                    {proofSelectedAgents.size}
+                  </span>
+                </button>
+              </div>
+
+              {/* Expand / Collapse Right Panel Toggle */}
+              <button
+                type="button"
+                onClick={() => setShowRightPanel((prev) => !prev)}
+                className={`py-2 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-1.5 border shadow-2xs ${
+                  showRightPanel
+                    ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100"
+                    : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                }`}
+                title={showRightPanel ? "Collapse Controls & Agent Breakdown" : "Expand Controls & Agent Breakdown"}
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 text-purple-600" />
+                <span>{showRightPanel ? "Hide Breakdown" : "Breakdown & Controls"}</span>
+                {showRightPanel ? (
+                  <ChevronUp className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
               </button>
             </div>
 
@@ -1770,9 +1824,25 @@ export default function ReturnAnalysisPage() {
                 <span className="px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 font-mono text-[11px] font-bold">
                   {letterAgentCode || "030409"}
                 </span>
-                <span className="px-2 py-0.5 rounded-lg bg-purple-50 text-purple-700 font-mono text-[11px] font-bold">
-                  {selectedDate}
-                </span>
+                <div
+                  className="flex items-center gap-1 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200"
+                  title="Anchor date (Click to change)"
+                >
+                  <Calendar className="w-3 h-3 text-purple-600" />
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => {
+                      const d = e.target.value;
+                      if (d) {
+                        setSelectedDate(d);
+                        setAllAgentResults([]);
+                        setExcludedAgents(new Set());
+                      }
+                    }}
+                    className="bg-transparent text-purple-800 font-mono text-[11px] font-bold border-none p-0 focus:outline-none cursor-pointer"
+                  />
+                </div>
                 {isSilva && showDigitalSignatures && (
                   <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1">
                     <span>Stamp &amp; Sign Active ✓</span>
@@ -2692,46 +2762,73 @@ export default function ReturnAnalysisPage() {
                 </div>
               </div>
             </div>
+
+            {!showRightPanel && (
+              <div className="w-full text-center py-2 no-print">
+                <button
+                  type="button"
+                  onClick={() => setShowRightPanel(true)}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-white border border-slate-200 hover:border-purple-300 hover:bg-purple-50/70 text-slate-700 hover:text-purple-700 text-xs font-bold shadow-xs transition group"
+                >
+                  <SlidersHorizontal className="w-4 h-4 text-purple-600 group-hover:scale-110 transition-transform" />
+                  <span>Expand Controls &amp; All Agents Breakdown</span>
+                  <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-purple-600" />
+                </button>
+              </div>
+            )}
           </div>
 
           {/* =========================================================
               RIGHT SIDE: REST COMPONENTS (CONTROLS, STATS & AGENTS TABLE)
               ========================================================= */}
-          <div className="lg:col-span-7 xl:col-span-7 space-y-5 no-print">
-            {/* 1. Report Period & Configuration Card */}
-            <div className="rounded-3xl bg-white p-5 sm:p-6 border border-slate-200 shadow-sm space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                <div>
-                  <h2 className="text-base sm:text-lg font-black text-slate-900">
-                    Analysis Controls
-                  </h2>
-                  <p className="text-xs text-slate-500 font-medium">
-                    Select anchor date; database records and returns load automatically
-                  </p>
-                </div>
+          {showRightPanel && (
+            <div className="lg:col-span-7 xl:col-span-7 space-y-5 no-print animate-in fade-in duration-200 w-full">
+              {/* 1. Report Period & Configuration Card */}
+              <div className="rounded-3xl bg-white p-5 sm:p-6 border border-slate-200 shadow-sm space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div>
+                    <h2 className="text-base sm:text-lg font-black text-slate-900">
+                      Analysis Controls
+                    </h2>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Select anchor date; database records and returns load automatically
+                    </p>
+                  </div>
 
-                {/* Mode Selector */}
-                <div className="inline-flex rounded-2xl bg-slate-100 p-1 border border-slate-200">
-                  {(["daily", "weekly", "monthly"] as const).map((mode) => (
+                  <div className="flex items-center gap-2">
+                    {/* Mode Selector */}
+                    <div className="inline-flex rounded-2xl bg-slate-100 p-1 border border-slate-200">
+                      {(["daily", "weekly", "monthly"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => {
+                            setReportMode(mode);
+                            setAllAgentResults([]);
+                            setExcludedAgents(new Set());
+                          }}
+                          className={`px-3 py-1.5 text-xs font-bold rounded-xl transition ${
+                            reportMode === mode
+                              ? "bg-white text-slate-900 shadow-xs"
+                              : "text-slate-500 hover:text-slate-900"
+                          }`}
+                        >
+                          {mode.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Collapse Right Panel Button */}
                     <button
-                      key={mode}
                       type="button"
-                      onClick={() => {
-                        setReportMode(mode);
-                        setAllAgentResults([]);
-                        setExcludedAgents(new Set());
-                      }}
-                      className={`px-3 py-1.5 text-xs font-bold rounded-xl transition ${
-                        reportMode === mode
-                          ? "bg-white text-slate-900 shadow-xs"
-                          : "text-slate-500 hover:text-slate-900"
-                      }`}
+                      onClick={() => setShowRightPanel(false)}
+                      className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition"
+                      title="Collapse Controls Panel"
                     >
-                      {mode.toUpperCase()}
+                      ✕
                     </button>
-                  ))}
+                  </div>
                 </div>
-              </div>
 
               {/* Date Picker */}
               <div className="space-y-1.5 max-w-sm">
@@ -3185,8 +3282,9 @@ export default function ReturnAnalysisPage() {
               )}
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
-  );
+  </div>
+);
 }
