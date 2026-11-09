@@ -2190,8 +2190,8 @@ ${letterAgentCode}`;
               >
                 {/* 1. Top Section: Address Blocks */}
                 <div className="flex justify-between items-start gap-4">
-                  {/* Top Left: Recipient */}
-                  <div className="text-left space-y-0.5 leading-snug">
+                  {/* Top Left: Recipient (Lowered for formal letter layout) */}
+                  <div className="text-left space-y-0.5 leading-snug pt-4 sm:pt-5">
                     <div className="font-normal">සභාපතිතුමා,</div>
                     <div className="font-normal">සංවර්ධන ලොතරැයි මණ්ඩලය,</div>
                     <div className="font-normal">කොළඹ 02.</div>
