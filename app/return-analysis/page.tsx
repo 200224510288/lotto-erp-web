@@ -2320,19 +2320,16 @@ ${letterAgentCode}`;
                   </div>
                   <div className="text-right -mt-2 pb-1">
                     {isSilva && showDigitalSignatures ? (
-                      <div className="flex flex-col items-end">
-                        <img
-                          src="/signatures/silva-seal.png"
-                          alt="S. W. O. Silva Rubber Stamp"
-                          className="mix-blend-multiply select-none pointer-events-none opacity-95"
-                          style={{
-                            width: `${stampScale}px`,
-                            height: "auto",
-                            transform: `rotate(${stampRotation}deg)`,
-                          }}
-                        />
-                        <span className="text-[10px] text-slate-500 font-semibold mt-0.5">රබර් මුද්‍රාව</span>
-                      </div>
+                      <img
+                        src="/signatures/silva-seal.png"
+                        alt="S. W. O. Silva Rubber Stamp"
+                        className="mix-blend-multiply select-none pointer-events-none opacity-95 inline-block"
+                        style={{
+                          width: `${stampScale}px`,
+                          height: "auto",
+                          transform: `rotate(${stampRotation}deg)`,
+                        }}
+                      />
                     ) : (
                       <span className="text-xs text-slate-600 font-semibold">රබර් මුද්‍රාව</span>
                     )}
