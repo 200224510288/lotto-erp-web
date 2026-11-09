@@ -43,7 +43,11 @@ import {
   ReturnThresholdConfig,
   findLotteryInfo,
 } from "../lib/returnThresholdConfig";
-import { singlishToSinhala, COMMON_RETURN_REASONS } from "../lib/singlishToSinhala";
+import {
+  singlishToSinhala,
+  handleInputKeystroke,
+  COMMON_RETURN_REASONS,
+} from "../lib/singlishToSinhala";
 
 export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
   Monday: { LWM: "LMO", AKM: "AMO", SFM: "SFM", SBM: "SBM", KTM: "KPM", SPM: "SRM", VM: "DMO", SM: "JMO", WM: "WMO" },
@@ -3055,13 +3059,132 @@ ${letterAgentCode}`;
                           <input
                             type="text"
                             value={letterReason}
+                            onKeyDown={(e) => {
+                              if (!enableSinglish) return;
+
+                              // Toggle mode with Ctrl + Space
+                              if (e.code === "Space" && e.ctrlKey) {
+                                e.preventDefault();
+                                setEnableSinglish((prev) => !prev);
+                                return;
+                              }
+
+                              // Pass through system hotkeys (Ctrl+C, Ctrl+V, Alt, Meta, Tab, etc.)
+                              if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+                              // Handle Space and Punctuation (auto-correct preceding phonetic word)
+                              if (
+                                e.key === " " ||
+                                e.key === "Spacebar" ||
+                                e.key === "," ||
+                                e.key === "." ||
+                                e.key === ")" ||
+                                e.key === "(" ||
+                                e.key === "-" ||
+                                e.key === "/" ||
+                                e.key === "Enter"
+                              ) {
+                                e.preventDefault();
+                                const input = e.currentTarget;
+                                const start = input.selectionStart ?? input.value.length;
+                                const end = input.selectionEnd ?? input.value.length;
+                                const before = input.value.substring(0, start);
+                                const after = input.value.substring(end);
+
+                                const { transformedBefore } = handleInputKeystroke(
+                                  before,
+                                  e.key === "Spacebar" ? " " : e.key
+                                );
+                                const nextVal = transformedBefore + after;
+                                setLetterReason(nextVal);
+                                const newPos = transformedBefore.length;
+                                requestAnimationFrame(() => {
+                                  input.setSelectionRange(newPos, newPos);
+                                });
+                                return;
+                              }
+
+                              // Handle single English character keystrokes (phonetic transliteration)
+                              if (e.key.length === 1 && /^[a-zA-Z\\`~]$/.test(e.key)) {
+                                e.preventDefault();
+                                const input = e.currentTarget;
+                                const start = input.selectionStart ?? input.value.length;
+                                const end = input.selectionEnd ?? input.value.length;
+                                const before = input.value.substring(0, start);
+                                const after = input.value.substring(end);
+
+                                const { transformedBefore } = handleInputKeystroke(before, e.key);
+                                const nextVal = transformedBefore + after;
+                                setLetterReason(nextVal);
+                                const newPos = transformedBefore.length;
+                                requestAnimationFrame(() => {
+                                  input.setSelectionRange(newPos, newPos);
+                                });
+                                return;
+                              }
+                            }}
+                            onPaste={(e) => {
+                              if (!enableSinglish) return;
+                              const pasted = e.clipboardData.getData("text");
+                              if (/[a-zA-Z]/.test(pasted)) {
+                                e.preventDefault();
+                                const input = e.currentTarget;
+                                const start = input.selectionStart ?? input.value.length;
+                                const end = input.selectionEnd ?? input.value.length;
+                                const before = input.value.substring(0, start);
+                                const after = input.value.substring(end);
+                                const converted = singlishToSinhala(pasted);
+                                const nextVal = before + converted + after;
+                                setLetterReason(nextVal);
+                                const newPos = before.length + converted.length;
+                                requestAnimationFrame(() => {
+                                  input.setSelectionRange(newPos, newPos);
+                                });
+                              }
+                            }}
+                            onBlur={(e) => {
+                              if (!enableSinglish) return;
+                              const val = e.target.value;
+                              if (val) {
+                                const cleaned = singlishToSinhala(val);
+                                if (cleaned !== val) {
+                                  setLetterReason(cleaned);
+                                }
+                              }
+                            }}
                             onChange={(e) => {
                               const val = e.target.value;
-                              setLetterReason(enableSinglish ? singlishToSinhala(val) : val);
+                              // Fallback for mobile / IME virtual keyboards
+                              if (enableSinglish && /[a-zA-Z]/.test(val)) {
+                                setLetterReason(singlishToSinhala(val));
+                              } else {
+                                setLetterReason(val);
+                              }
                             }}
-                            placeholder="Type in Singlish (e.g. 'ayahapath kalagunaya (wahi)') or in Sinhala..."
+                            placeholder="Type in English sounds (e.g. 'ayahapath kalagunaya') → types automatically in Sinhala..."
                             className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs font-medium focus:border-purple-600 focus:outline-none"
                           />
+                          <div className="flex items-center justify-between text-[10px] text-slate-500 pt-0.5">
+                            <span className="flex items-center gap-1 font-medium">
+                              <span
+                                className={`inline-block w-1.5 h-1.5 rounded-full ${
+                                  enableSinglish ? "bg-emerald-500 animate-pulse" : "bg-slate-400"
+                                }`}
+                              ></span>
+                              {enableSinglish ? (
+                                <span>
+                                  Singlish Typing: Type English sounds (e.g.{" "}
+                                  <strong className="text-purple-700">ayahapath kalagunaya</strong>) → automatically
+                                  converts to Sinhala
+                                </span>
+                              ) : (
+                                <span>Direct English / Sinhala mode</span>
+                              )}
+                            </span>
+                            <span className="font-mono text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                              Ctrl + Space
+                            </span>
+                          </div>
                           {/* Quick Preset Reasons */}
                           <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
                             <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">
