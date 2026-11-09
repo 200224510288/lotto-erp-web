@@ -1837,7 +1837,8 @@ ${letterAgentCode}`;
             color: #000000 !important;
             -webkit-text-fill-color: #000000 !important;
             text-align: center !important;
-            font-weight: bold !important;
+            font-weight: 800 !important;
+            font-size: 11.5pt !important;
           }
 
           /* Tables and rows */
@@ -2262,7 +2263,7 @@ ${letterAgentCode}`;
                                     [lottery]: val,
                                   }));
                                 }}
-                                className="w-full text-center bg-transparent focus:bg-blue-50/50 rounded py-0.5 text-xs font-bold font-mono outline-none"
+                                className="w-full text-center bg-transparent focus:bg-blue-50/50 rounded py-0.5 text-[14px] sm:text-[15px] font-bold font-mono text-slate-950 outline-none tracking-wide"
                               />
                             </td>
                           </tr>
