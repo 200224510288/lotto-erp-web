@@ -799,8 +799,8 @@ export default function ReturnAnalysisPage() {
   const [docFontSize, setDocFontSize] = useState<number>(11.5);
   const [docFontFamily, setDocFontFamily] = useState<"serif" | "sans" | "mono">("serif");
   const [docLineHeight, setDocLineHeight] = useState<number>(1.36);
-  const [docPaddingX, setDocPaddingX] = useState<number>(28);
-  const [docPaddingY, setDocPaddingY] = useState<number>(20);
+  const [docPaddingX, setDocPaddingX] = useState<number>(34);
+  const [docPaddingY, setDocPaddingY] = useState<number>(26);
   const [docSectionSpacing, setDocSectionSpacing] = useState<number>(8);
   const [sigScale, setSigScale] = useState<number>(135);
   const [sigOffsetY, setSigOffsetY] = useState<number>(-42);
@@ -828,25 +828,33 @@ export default function ReturnAnalysisPage() {
   useEffect(() => {
     try {
       if (typeof window !== "undefined") {
+        const savedV3 = localStorage.getItem("dlb_doc_styles_v3");
         const savedV2 = localStorage.getItem("dlb_doc_styles_v2");
         const savedV1 = localStorage.getItem("dlb_doc_styles_v1");
-        const saved = savedV2 || savedV1;
+        const saved = savedV3 || savedV2 || savedV1;
         if (saved) {
           const p = JSON.parse(saved);
           if (typeof p.docFontSize === "number") setDocFontSize(p.docFontSize);
           if (["serif", "sans", "mono"].includes(p.docFontFamily)) setDocFontFamily(p.docFontFamily);
           if (typeof p.docLineHeight === "number") setDocLineHeight(p.docLineHeight);
-          if (typeof p.docPaddingX === "number") setDocPaddingX(p.docPaddingX);
-          if (typeof p.docPaddingY === "number") setDocPaddingY(p.docPaddingY);
+          if (savedV3 && typeof p.docPaddingX === "number") {
+            setDocPaddingX(p.docPaddingX);
+          } else {
+            setDocPaddingX(Math.max(34, typeof p.docPaddingX === "number" ? p.docPaddingX : 34));
+          }
+          if (savedV3 && typeof p.docPaddingY === "number") {
+            setDocPaddingY(p.docPaddingY);
+          } else {
+            setDocPaddingY(Math.max(26, typeof p.docPaddingY === "number" ? p.docPaddingY : 26));
+          }
           if (typeof p.docSectionSpacing === "number") setDocSectionSpacing(p.docSectionSpacing);
           if (typeof p.sigScale === "number") setSigScale(p.sigScale);
-          // If v2 is not yet saved, use optimized defaults (-42px offset, 6px space)
-          if (savedV2 && typeof p.sigOffsetY === "number") {
+          if ((savedV3 || savedV2) && typeof p.sigOffsetY === "number") {
             setSigOffsetY(p.sigOffsetY);
           } else {
             setSigOffsetY(-42);
           }
-          if (savedV2 && typeof p.sigTopSpace === "number") {
+          if ((savedV3 || savedV2) && typeof p.sigTopSpace === "number") {
             setSigTopSpace(p.sigTopSpace);
           } else {
             setSigTopSpace(6);
@@ -871,7 +879,7 @@ export default function ReturnAnalysisPage() {
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem(
-          "dlb_doc_styles_v2",
+          "dlb_doc_styles_v3",
           JSON.stringify({
             docFontSize,
             docFontFamily,
@@ -913,8 +921,8 @@ export default function ReturnAnalysisPage() {
     setDocFontSize(11.5);
     setDocFontFamily("serif");
     setDocLineHeight(1.36);
-    setDocPaddingX(28);
-    setDocPaddingY(20);
+    setDocPaddingX(34);
+    setDocPaddingY(26);
     setDocSectionSpacing(8);
     setSigScale(135);
     setSigOffsetY(-42);
@@ -926,13 +934,13 @@ export default function ReturnAnalysisPage() {
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem(
-          "dlb_doc_styles_v2",
+          "dlb_doc_styles_v3",
           JSON.stringify({
             docFontSize: 11.5,
             docFontFamily: "serif",
             docLineHeight: 1.36,
-            docPaddingX: 28,
-            docPaddingY: 20,
+            docPaddingX: 34,
+            docPaddingY: 26,
             docSectionSpacing: 8,
             sigScale: 135,
             sigOffsetY: -42,
@@ -1745,7 +1753,7 @@ ${letterAgentCode}`;
         @media print {
           @page {
             size: A4 portrait;
-            margin: 8mm 12mm 8mm 12mm;
+            margin: 0;
           }
 
           html, body {
@@ -1785,46 +1793,28 @@ ${letterAgentCode}`;
             overflow: visible !important;
           }
 
-          /* 1-Page Guarantee for Notice Letter */
-          #letter-preview-document {
-            display: block !important;
-            width: 100% !important;
-            max-width: 100% !important;
-            height: auto !important;
-            max-height: 280mm !important;
-            padding: 0 !important;
-            margin: 0 auto !important;
-            border: none !important;
-            box-shadow: none !important;
-            background: #ffffff !important;
-            color: #000000 !important;
-            page-break-inside: avoid !important;
-            break-inside: avoid !important;
-            page-break-after: auto !important;
-            break-after: auto !important;
-            overflow: hidden !important;
-            box-sizing: border-box !important;
-          }
-
-          /* General printable doc styling */
+          /* 1-Page Guarantee & Safe Margins for Notice Letter & Proof Annexure */
+          #letter-preview-document,
+          #agent-proof-attachment,
           .printable-preview-doc {
             display: block !important;
             width: 100% !important;
             max-width: 100% !important;
             min-height: auto !important;
             height: auto !important;
+            box-sizing: border-box !important;
+            padding: var(--print-padding, 18mm 20mm 16mm 20mm) !important;
             margin: 0 auto !important;
-            padding: 0 !important;
             border: none !important;
             box-shadow: none !important;
             background: #ffffff !important;
             color: #000000 !important;
-            box-sizing: border-box !important;
             font-size: var(--doc-font-size, 10.5pt) !important;
             line-height: var(--doc-line-height, 1.34) !important;
             font-family: var(--doc-font-family, serif) !important;
             page-break-inside: avoid !important;
             break-inside: avoid !important;
+            overflow: visible !important;
           }
 
           /* Tighten spacing in print so all 8 sections easily fit in single sheet */
@@ -2182,26 +2172,26 @@ ${letterAgentCode}`;
               <div
                 ref={previewSheetRef}
                 id="letter-preview-document"
-                className={`w-full max-w-[560px] bg-white rounded-sm shadow-2xl text-slate-900 border border-slate-200 dynamic-doc-spacing ${
+                className={`w-full max-w-[595px] bg-white rounded-sm shadow-2xl text-slate-900 border border-slate-200 dynamic-doc-spacing ${
                   activePreviewTab === "notice" || printBundle ? "block printable-preview-doc" : "hidden"
                 }`}
                 style={{
-                  minHeight: "760px",
+                  minHeight: "780px",
                   fontSize: `${docFontSize}px`,
                   lineHeight: docLineHeight,
                   padding: `${docPaddingY}px ${docPaddingX}px`,
                   fontFamily: docFontFamilyValue,
                   ['--doc-section-gap' as any]: `${docSectionSpacing}px`,
-                  ['--print-padding' as any]: `${Math.round((docPaddingY / 28) * 18)}mm ${Math.round((docPaddingX / 32) * 22)}mm ${Math.round((docPaddingY / 28) * 16)}mm ${Math.round((docPaddingX / 32) * 22)}mm`,
+                  ['--print-padding' as any]: `${Math.max(16, Math.round((docPaddingY / 26) * 18))}mm ${Math.max(18, Math.round((docPaddingX / 34) * 20))}mm ${Math.max(14, Math.round((docPaddingY / 26) * 16))}mm ${Math.max(18, Math.round((docPaddingX / 34) * 20))}mm`,
                   ['--doc-font-size' as any]: `${(docFontSize * 0.85).toFixed(1)}pt`,
                   ['--doc-line-height' as any]: `${docLineHeight}`,
                   ['--doc-font-family' as any]: docFontFamilyValue,
                 }}
               >
                 {/* 1. Top Section: Address Blocks */}
-                <div className="flex justify-between items-start gap-4 pt-0.5">
+                <div className="flex justify-between items-start gap-4">
                   {/* Top Left: Recipient */}
-                  <div className="text-left space-y-0.5 leading-snug pt-2 sm:pt-2.5">
+                  <div className="text-left space-y-0.5 leading-snug">
                     <div className="font-normal">සභාපතිතුමා,</div>
                     <div className="font-normal">සංවර්ධන ලොතරැයි මණ්ඩලය,</div>
                     <div className="font-normal">කොළඹ 02.</div>
@@ -2410,17 +2400,17 @@ ${letterAgentCode}`;
               <div
                 ref={proofSheetRef}
                 id="proof-preview-document"
-                className={`w-full max-w-[560px] bg-white rounded-sm shadow-2xl text-black border border-black dynamic-doc-spacing ${
+                className={`w-full max-w-[595px] bg-white rounded-sm shadow-2xl text-black border border-black dynamic-doc-spacing ${
                   activePreviewTab === "proof" || printBundle ? "block printable-preview-doc" : "hidden"
                 }`}
                 style={{
-                  minHeight: "760px",
+                  minHeight: "780px",
                   fontSize: `${docFontSize}px`,
                   lineHeight: docLineHeight,
                   padding: `${docPaddingY}px ${docPaddingX}px`,
                   fontFamily: docFontFamilyValue,
                   ['--doc-section-gap' as any]: `${docSectionSpacing}px`,
-                  ['--print-padding' as any]: `${Math.round((docPaddingY / 28) * 18)}mm ${Math.round((docPaddingX / 32) * 22)}mm ${Math.round((docPaddingY / 28) * 16)}mm ${Math.round((docPaddingX / 32) * 22)}mm`,
+                  ['--print-padding' as any]: `${Math.max(16, Math.round((docPaddingY / 26) * 18))}mm ${Math.max(18, Math.round((docPaddingX / 34) * 20))}mm ${Math.max(14, Math.round((docPaddingY / 26) * 16))}mm ${Math.max(18, Math.round((docPaddingX / 34) * 20))}mm`,
                   ['--doc-font-size' as any]: `${(docFontSize * 0.85).toFixed(1)}pt`,
                   ['--doc-line-height' as any]: `${docLineHeight}`,
                   ['--doc-font-family' as any]: docFontFamilyValue,
@@ -2806,8 +2796,8 @@ ${letterAgentCode}`;
                         </div>
                         <input
                           type="range"
-                          min="12"
-                          max="56"
+                          min="16"
+                          max="64"
                           step="2"
                           value={docPaddingX}
                           onChange={(e) => setDocPaddingX(parseInt(e.target.value, 10))}
@@ -2822,8 +2812,8 @@ ${letterAgentCode}`;
                         </div>
                         <input
                           type="range"
-                          min="10"
-                          max="40"
+                          min="14"
+                          max="50"
                           step="2"
                           value={docPaddingY}
                           onChange={(e) => setDocPaddingY(parseInt(e.target.value, 10))}
