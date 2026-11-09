@@ -1006,32 +1006,19 @@ export default function ReturnAnalysisPage() {
   }, [letterDistrict, letterAgentName, letterAgentCode, selectedDate]);
 
   const emailBody = useMemo(() => {
-    const bookQtysSummary = OFFICIAL_SINHALA_LOTTERIES.map((name, idx) => {
-      const qty = lotteryBookQtys[name] || "0";
-      return `  ${idx + 1}. ${name}: ${qty} පොත්`;
-    }).join("\n");
+    return `ගරු නිලධාරීතුමනි (${letterOfficerName}),
 
-    return `ගරු නිලධාරීතුමනි / To: ${letterOfficerName} (rumeshdlb@gmail.com),
-CC: mou@dlb.lk
+${selectedDate} දිනට අදාළව අනුමත ප්‍රතිශතය ඉක්මවා සිදුකරන ලද ආපසු එවුම් (Return) පිළිබඳ නිල ලිපිය සහ සාක්ෂි ලේඛනය (Proof Annexure) මේ සමඟ PDF ගොනු ලෙස අමුණා ඇත.
 
-අනුමත ප්‍රතිශතය ඉක්මවා සිදුකරන ආපසු එවුම් (Return) සම්බන්ධව දැනුම් දීම.
-
-දිනය: ${selectedDate}
-දිස්ත්‍රික්කය: ${letterDistrict}
-බෙදාහැරීමේ අලෙවි නියෝජිත: ${letterAgentName} (අංකය: ${letterAgentCode})
-ලිපිනය: ${letterAddressLine1} ${letterAddressLine2} ${letterDistrict}
-
-ආපසු එවුම් ප්‍රමාණයන් (පොත්):
-${bookQtysSummary}
-
-${letterReason ? `හේතුව: ${letterReason}\n` : ""}
-${
+• බෙදාහැරීමේ අලෙවි නියෝජිත: ${letterAgentName} (${letterAgentCode})
+• දිස්ත්‍රික්කය: ${letterDistrict}
+• අදාළ දිනය: ${selectedDate}
+${letterReason ? `• ඉදිරිපත් කරන හේතුව: ${letterReason}\n` : ""}${
   proofSelectedAgents.size > 0
-    ? `සාක්ෂි ලේඛනය (Proof Annexure): අනුමත ප්‍රතිශතය ඉක්මවූ නියෝජිතයින් ${proofSelectedAgents.size} දෙනෙකුගේ විස්තර ඇතුලත් කර ඇත.\n`
+    ? `• අමුණා ඇති සාක්ෂි ලේඛනය: නියෝජිතයින් ${proofSelectedAgents.size} දෙනෙකුගේ ආපසු එවුම් විස්තර ඇතුළත් කර ඇත.\n`
     : ""
 }
-ඉහත කරුණු සලකා බලා අවශ්‍ය නිර්දේශය ලබාදෙන මෙන් කාරුණිකව ඉල්ලා සිටිමි.
-(අදාළ නිල ලිපිය සහ සාක්ෂි ලේඛනය PDF ගොනුව මේ සමඟ අමුණා ඇත.)
+කරුණාකර අමුණා ඇති PDF ලේඛන සලකා බලා අවශ්‍ය නිර්දේශය ලබාදෙන මෙන් කාරුණිකව ඉල්ලා සිටිමි.
 
 ස්තූතියි,
 ${letterAgentName}
@@ -1042,9 +1029,6 @@ ${letterAgentCode}`;
     letterDistrict,
     letterAgentName,
     letterAgentCode,
-    letterAddressLine1,
-    letterAddressLine2,
-    lotteryBookQtys,
     letterReason,
     proofSelectedAgents,
   ]);
