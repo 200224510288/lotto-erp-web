@@ -43,6 +43,7 @@ import {
   ReturnThresholdConfig,
   findLotteryInfo,
 } from "../lib/returnThresholdConfig";
+import { singlishToSinhala, COMMON_RETURN_REASONS } from "../lib/singlishToSinhala";
 
 export const ERP_GAME_MAP: Record<string, Record<string, string>> = {
   Monday: { LWM: "LMO", AKM: "AMO", SFM: "SFM", SBM: "SBM", KTM: "KPM", SPM: "SRM", VM: "DMO", SM: "JMO", WM: "WMO" },
@@ -787,20 +788,27 @@ export default function ReturnAnalysisPage() {
   const [emailCc, setEmailCc] = useState<string>("mou@dlb.lk");
   const [copyEmailSuccess, setCopyEmailSuccess] = useState<boolean>(false);
 
-  // Document Styling & Layout Customization
-  const [docFontSize, setDocFontSize] = useState<number>(12.5);
+  // Singlish phonetic auto-translation for Reason input
+  const [enableSinglish, setEnableSinglish] = useState<boolean>(true);
+
+  // Document Styling & Layout Customization (Optimized for 1-Page A4 Sheet Fit)
+  const [docFontSize, setDocFontSize] = useState<number>(11.5);
   const [docFontFamily, setDocFontFamily] = useState<"serif" | "sans" | "mono">("serif");
-  const [docLineHeight, setDocLineHeight] = useState<number>(1.45);
-  const [docPaddingX, setDocPaddingX] = useState<number>(32);
-  const [docPaddingY, setDocPaddingY] = useState<number>(28);
-  const [docSectionSpacing, setDocSectionSpacing] = useState<number>(14);
-  const [sigScale, setSigScale] = useState<number>(140);
-  const [sigOffsetY, setSigOffsetY] = useState<number>(-32);
-  const [sigTopSpace, setSigTopSpace] = useState<number>(24);
-  const [stampScale, setStampScale] = useState<number>(150);
+  const [docLineHeight, setDocLineHeight] = useState<number>(1.36);
+  const [docPaddingX, setDocPaddingX] = useState<number>(28);
+  const [docPaddingY, setDocPaddingY] = useState<number>(20);
+  const [docSectionSpacing, setDocSectionSpacing] = useState<number>(8);
+  const [sigScale, setSigScale] = useState<number>(135);
+  const [sigOffsetY, setSigOffsetY] = useState<number>(-28);
+  const [sigTopSpace, setSigTopSpace] = useState<number>(14);
+  const [stampScale, setStampScale] = useState<number>(140);
   const [stampRotation, setStampRotation] = useState<number>(-1);
-  const [officerSigSpace, setOfficerSigSpace] = useState<number>(24);
-  const [approvalSpace, setApprovalSpace] = useState<number>(28);
+  const [officerSigSpace, setOfficerSigSpace] = useState<number>(14);
+  const [approvalSpace, setApprovalSpace] = useState<number>(16);
+
+  // Auto-save & hydration tracker
+  const isStylesHydratedRef = useRef<boolean>(false);
+  const [styleSavedNotice, setStyleSavedNotice] = useState<boolean>(false);
 
   const docFontFamilyValue = useMemo(() => {
     if (docFontFamily === "sans") {
@@ -812,31 +820,39 @@ export default function ReturnAnalysisPage() {
     return "'Noto Serif Sinhala', 'Times New Roman', Georgia, serif";
   }, [docFontFamily]);
 
-  // Load saved styles from localStorage on mount
+  // 1. Hydrate saved styles from localStorage on initial mount
   useEffect(() => {
     try {
-      const saved = typeof window !== "undefined" ? localStorage.getItem("dlb_doc_styles_v1") : null;
-      if (saved) {
-        const p = JSON.parse(saved);
-        if (typeof p.docFontSize === "number") setDocFontSize(p.docFontSize);
-        if (["serif", "sans", "mono"].includes(p.docFontFamily)) setDocFontFamily(p.docFontFamily);
-        if (typeof p.docLineHeight === "number") setDocLineHeight(p.docLineHeight);
-        if (typeof p.docPaddingX === "number") setDocPaddingX(p.docPaddingX);
-        if (typeof p.docPaddingY === "number") setDocPaddingY(p.docPaddingY);
-        if (typeof p.docSectionSpacing === "number") setDocSectionSpacing(p.docSectionSpacing);
-        if (typeof p.sigScale === "number") setSigScale(p.sigScale);
-        if (typeof p.sigOffsetY === "number") setSigOffsetY(p.sigOffsetY);
-        if (typeof p.sigTopSpace === "number") setSigTopSpace(p.sigTopSpace);
-        if (typeof p.stampScale === "number") setStampScale(p.stampScale);
-        if (typeof p.stampRotation === "number") setStampRotation(p.stampRotation);
-        if (typeof p.officerSigSpace === "number") setOfficerSigSpace(p.officerSigSpace);
-        if (typeof p.approvalSpace === "number") setApprovalSpace(p.approvalSpace);
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem("dlb_doc_styles_v1");
+        if (saved) {
+          const p = JSON.parse(saved);
+          if (typeof p.docFontSize === "number") setDocFontSize(p.docFontSize);
+          if (["serif", "sans", "mono"].includes(p.docFontFamily)) setDocFontFamily(p.docFontFamily);
+          if (typeof p.docLineHeight === "number") setDocLineHeight(p.docLineHeight);
+          if (typeof p.docPaddingX === "number") setDocPaddingX(p.docPaddingX);
+          if (typeof p.docPaddingY === "number") setDocPaddingY(p.docPaddingY);
+          if (typeof p.docSectionSpacing === "number") setDocSectionSpacing(p.docSectionSpacing);
+          if (typeof p.sigScale === "number") setSigScale(p.sigScale);
+          if (typeof p.sigOffsetY === "number") setSigOffsetY(p.sigOffsetY);
+          if (typeof p.sigTopSpace === "number") setSigTopSpace(p.sigTopSpace);
+          if (typeof p.stampScale === "number") setStampScale(p.stampScale);
+          if (typeof p.stampRotation === "number") setStampRotation(p.stampRotation);
+          if (typeof p.officerSigSpace === "number") setOfficerSigSpace(p.officerSigSpace);
+          if (typeof p.approvalSpace === "number") setApprovalSpace(p.approvalSpace);
+        }
       }
     } catch {}
+    // Mark as hydrated after loading so subsequent slider modifications are persisted
+    const timer = setTimeout(() => {
+      isStylesHydratedRef.current = true;
+    }, 60);
+    return () => clearTimeout(timer);
   }, []);
 
-  // Save styles to localStorage on change
+  // 2. Auto-save styles to localStorage whenever any style value changes (after hydration)
   useEffect(() => {
+    if (!isStylesHydratedRef.current) return;
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem(
@@ -857,6 +873,9 @@ export default function ReturnAnalysisPage() {
             approvalSpace,
           })
         );
+        setStyleSavedNotice(true);
+        const timer = setTimeout(() => setStyleSavedNotice(false), 1600);
+        return () => clearTimeout(timer);
       }
     } catch {}
   }, [
@@ -876,24 +895,43 @@ export default function ReturnAnalysisPage() {
   ]);
 
   const resetDocStyles = () => {
-    setDocFontSize(12.5);
+    setDocFontSize(11.5);
     setDocFontFamily("serif");
-    setDocLineHeight(1.45);
-    setDocPaddingX(32);
-    setDocPaddingY(28);
-    setDocSectionSpacing(14);
-    setSigScale(140);
-    setSigOffsetY(-32);
-    setSigTopSpace(24);
-    setStampScale(150);
+    setDocLineHeight(1.36);
+    setDocPaddingX(28);
+    setDocPaddingY(20);
+    setDocSectionSpacing(8);
+    setSigScale(135);
+    setSigOffsetY(-28);
+    setSigTopSpace(14);
+    setStampScale(140);
     setStampRotation(-1);
-    setOfficerSigSpace(24);
-    setApprovalSpace(28);
+    setOfficerSigSpace(14);
+    setApprovalSpace(16);
     try {
       if (typeof window !== "undefined") {
-        localStorage.removeItem("dlb_doc_styles_v1");
+        localStorage.setItem(
+          "dlb_doc_styles_v1",
+          JSON.stringify({
+            docFontSize: 11.5,
+            docFontFamily: "serif",
+            docLineHeight: 1.36,
+            docPaddingX: 28,
+            docPaddingY: 20,
+            docSectionSpacing: 8,
+            sigScale: 135,
+            sigOffsetY: -28,
+            sigTopSpace: 14,
+            stampScale: 140,
+            stampRotation: -1,
+            officerSigSpace: 14,
+            approvalSpace: 16,
+          })
+        );
       }
     } catch {}
+    setStyleSavedNotice(true);
+    setTimeout(() => setStyleSavedNotice(false), 2000);
   };
 
   // Check if letter belongs to S. W. O. Silva (030409 / 03/409)
@@ -1562,8 +1600,19 @@ ${letterAgentCode}`;
         format: "a4",
       });
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+      const pdfPageHeight = pdf.internal.pageSize.getHeight();
+      let pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      let finalW = pdfWidth;
+      let finalH = pdfHeight;
+      let posX = 0;
+      let posY = 0;
+      if (finalH > pdfPageHeight) {
+        const ratio = pdfPageHeight / finalH;
+        finalH = pdfPageHeight;
+        finalW = pdfWidth * ratio;
+        posX = (pdfWidth - finalW) / 2;
+      }
+      pdf.addImage(imgData, "PNG", posX, posY, finalW, finalH);
       const filename =
         activePreviewTab === "notice"
           ? `DLB_Return_Notice_${letterAgentCode || "030409"}_${selectedDate}.pdf`
@@ -1602,12 +1651,36 @@ ${letterAgentCode}`;
       });
 
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const noticeHeight = (canvasNotice.height * pdfWidth) / canvasNotice.width;
-      pdf.addImage(canvasNotice.toDataURL("image/png"), "PNG", 0, 0, pdfWidth, noticeHeight);
+      const pdfPageHeight = pdf.internal.pageSize.getHeight();
 
+      // Page 1: Notice Letter
+      let noticeHeight = (canvasNotice.height * pdfWidth) / canvasNotice.width;
+      let noticeW = pdfWidth;
+      let noticeH = noticeHeight;
+      let noticeX = 0;
+      let noticeY = 0;
+      if (noticeH > pdfPageHeight) {
+        const ratio = pdfPageHeight / noticeH;
+        noticeH = pdfPageHeight;
+        noticeW = pdfWidth * ratio;
+        noticeX = (pdfWidth - noticeW) / 2;
+      }
+      pdf.addImage(canvasNotice.toDataURL("image/png"), "PNG", noticeX, noticeY, noticeW, noticeH);
+
+      // Page 2: Proof Annexure
       pdf.addPage();
-      const proofHeight = (canvasProof.height * pdfWidth) / canvasProof.width;
-      pdf.addImage(canvasProof.toDataURL("image/png"), "PNG", 0, 0, pdfWidth, proofHeight);
+      let proofHeight = (canvasProof.height * pdfWidth) / canvasProof.width;
+      let proofW = pdfWidth;
+      let proofH = proofHeight;
+      let proofX = 0;
+      let proofY = 0;
+      if (proofH > pdfPageHeight) {
+        const ratio = pdfPageHeight / proofH;
+        proofH = pdfPageHeight;
+        proofW = pdfWidth * ratio;
+        proofX = (pdfWidth - proofW) / 2;
+      }
+      pdf.addImage(canvasProof.toDataURL("image/png"), "PNG", proofX, proofY, proofW, proofH);
 
       pdf.save(`DLB_Notice_and_Proof_Bundle_${letterAgentCode || "030409"}_${selectedDate}.pdf`);
     } catch (err) {
@@ -1651,13 +1724,13 @@ ${letterAgentCode}`;
       {/* Print Styles: isolates preview documents with perfect margins and supports multi-page bundle printing */}
       <style jsx global>{`
         .dynamic-doc-spacing > :not([hidden]) ~ :not([hidden]) {
-          margin-top: var(--doc-section-gap, 14px) !important;
+          margin-top: var(--doc-section-gap, 8px) !important;
         }
 
         @media print {
           @page {
             size: A4 portrait;
-            margin: 0;
+            margin: 8mm 12mm 8mm 12mm;
           }
 
           html, body {
@@ -1668,7 +1741,7 @@ ${letterAgentCode}`;
             height: auto !important;
             background: #ffffff !important;
             color: #000000 !important;
-            font-size: 11pt !important;
+            font-size: 10pt !important;
             overflow: visible !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
@@ -1697,24 +1770,51 @@ ${letterAgentCode}`;
             overflow: visible !important;
           }
 
-          /* Sheet formatting on paper: exact A4 width with generous 22mm side margins and 18mm top/bottom */
-          .printable-preview-doc {
+          /* 1-Page Guarantee for Notice Letter */
+          #letter-preview-document {
             display: block !important;
-            width: 210mm !important;
+            width: 100% !important;
             max-width: 100% !important;
-            min-height: auto !important;
             height: auto !important;
+            max-height: 280mm !important;
+            padding: 0 !important;
             margin: 0 auto !important;
-            padding: var(--print-padding, 18mm 22mm 16mm 22mm) !important;
             border: none !important;
             box-shadow: none !important;
             background: #ffffff !important;
             color: #000000 !important;
-            overflow: visible !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            page-break-after: auto !important;
+            break-after: auto !important;
+            overflow: hidden !important;
             box-sizing: border-box !important;
-            font-size: var(--doc-font-size, 11pt) !important;
-            line-height: var(--doc-line-height, 1.45) !important;
+          }
+
+          /* General printable doc styling */
+          .printable-preview-doc {
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            min-height: auto !important;
+            height: auto !important;
+            margin: 0 auto !important;
+            padding: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+            background: #ffffff !important;
+            color: #000000 !important;
+            box-sizing: border-box !important;
+            font-size: var(--doc-font-size, 10.5pt) !important;
+            line-height: var(--doc-line-height, 1.34) !important;
             font-family: var(--doc-font-family, serif) !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+
+          /* Tighten spacing in print so all 8 sections easily fit in single sheet */
+          .dynamic-doc-spacing > :not([hidden]) ~ :not([hidden]) {
+            margin-top: 5px !important;
           }
 
           /* Multi-page break: page-break between multiple documents only */
@@ -1749,6 +1849,8 @@ ${letterAgentCode}`;
           .printable-preview-doc td {
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
+            padding-top: 2.5px !important;
+            padding-bottom: 2.5px !important;
           }
         }
       `}</style>
@@ -2082,9 +2184,9 @@ ${letterAgentCode}`;
                 }}
               >
                 {/* 1. Top Section: Address Blocks */}
-                <div className="flex justify-between items-start gap-4 pt-1">
+                <div className="flex justify-between items-start gap-4 pt-0.5">
                   {/* Top Left: Recipient */}
-                  <div className="text-left space-y-0.5 leading-snug pt-4 sm:pt-5">
+                  <div className="text-left space-y-0.5 leading-snug pt-2 sm:pt-2.5">
                     <div className="font-normal">සභාපතිතුමා,</div>
                     <div className="font-normal">සංවර්ධන ලොතරැයි මණ්ඩලය,</div>
                     <div className="font-normal">කොළඹ 02.</div>
@@ -2100,7 +2202,7 @@ ${letterAgentCode}`;
                 </div>
 
                 {/* 2. Subject Line */}
-                <div className="text-center pt-3 pb-1">
+                <div className="text-center pt-2 pb-0.5">
                   <h2 className="font-bold text-[13px] sm:text-[14px] underline inline-block tracking-normal">
                     අනුමත ප්‍රතිශතය ඉක්මවා සිදුකරන ආපසු එවුම් (Return) සම්බන්ධව දැනුම් දීම.
                   </h2>
@@ -2166,19 +2268,16 @@ ${letterAgentCode}`;
                 </div>
 
                 {/* 5. Reasons Section */}
-                <div className="space-y-2 pt-1 leading-relaxed">
+                <div className="space-y-1.5 pt-0.5 leading-relaxed">
                   <div>ඒ සඳහා පහත සඳහන් හේතුන් බලපා ඇති බව තහවුරු කරමි.</div>
                   {letterReason ? (
-                    <div className="text-slate-800 font-medium px-1 py-0.5 border-b border-dotted border-slate-600 min-h-[22px]">
+                    <div className="text-slate-800 font-medium px-1 py-0.5 border-b border-dotted border-slate-600 min-h-[20px]">
                       {letterReason}
                     </div>
                   ) : (
-                    <>
-                      <div className="border-b border-dotted border-slate-400 h-4 w-full" />
-                      <div className="border-b border-dotted border-slate-400 h-4 w-full" />
-                    </>
+                    <div className="border-b border-dotted border-slate-400 h-3.5 w-full" />
                   )}
-                  <div className="pt-1">
+                  <div className="pt-0.5">
                     ඉහත සඳහන් හේතුන් සලකා බලා මාගේ කොමිස් මුදල කපා නොහරින ලෙස ඉල්ලා සිටිමි.
                   </div>
                 </div>
@@ -2270,13 +2369,16 @@ ${letterAgentCode}`;
                 <hr className="border-t-2 border-slate-900 my-2" />
 
                 {/* 8. Management Approval */}
-                <div className="space-y-2 pt-1 text-[0.95em]">
+                <div
+                  className="space-y-1 pt-0.5 text-[0.95em]"
+                  style={{ pageBreakInside: "avoid", breakInside: "avoid" }}
+                >
                   <div className="font-medium text-slate-900">කොමිස් මුදල කපා හැරීම අත්හිටුවීම අනුමත කරමි / නොකරමි.</div>
                   <div
                     className="flex justify-between items-end"
                     style={{ paddingTop: `${approvalSpace}px` }}
                   >
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <div className="border-b border-dotted border-slate-700 w-60"></div>
                       <div className="text-slate-800 font-medium text-[0.95em]">
                         නියෝජ්‍ය සාමාන්‍යාධිකාරී (අලෙවි) / සහකාර සාමාන්‍යාධිකාරී (විකුණුම්)
@@ -2507,15 +2609,27 @@ ${letterAgentCode}`;
 
                 <div className="flex items-center gap-2">
                   {rightPanelTab === "styling" && (
-                    <button
-                      type="button"
-                      onClick={resetDocStyles}
-                      className="px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:text-purple-700 bg-slate-100 hover:bg-purple-50 rounded-lg border border-slate-200 transition flex items-center gap-1"
-                      title="Reset all font sizes, line heights, paddings and signature spacings to default"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>Reset Defaults</span>
-                    </button>
+                    <>
+                      {styleSavedNotice ? (
+                        <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 animate-in fade-in">
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Auto-Saved as Default ✓</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-semibold hidden sm:inline">
+                          Styles auto-save on change
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={resetDocStyles}
+                        className="px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:text-purple-700 bg-slate-100 hover:bg-purple-50 rounded-lg border border-slate-200 transition flex items-center gap-1"
+                        title="Reset all font sizes, line heights, paddings and signature spacings to 1-page fit defaults"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>1-Page Fit Defaults</span>
+                      </button>
+                    </>
                   )}
                   <button
                     type="button"
@@ -2598,7 +2712,7 @@ ${letterAgentCode}`;
                           className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
                         />
                         <div className="flex gap-1 mt-2">
-                          {[11, 12, 12.5, 13.5, 14.5].map((s) => (
+                          {[10.5, 11, 11.5, 12, 12.5, 13.5].map((s) => (
                             <button
                               key={s}
                               type="button"
@@ -2636,9 +2750,9 @@ ${letterAgentCode}`;
                         <div className="flex gap-1 mt-2">
                           {[
                             { val: 1.25, label: "Tight" },
+                            { val: 1.36, label: "Fit A4" },
                             { val: 1.45, label: "Normal" },
-                            { val: 1.65, label: "Relaxed" },
-                            { val: 1.80, label: "Loose" },
+                            { val: 1.60, label: "Loose" },
                           ].map((h) => (
                             <button
                               key={h.val}
@@ -2693,8 +2807,8 @@ ${letterAgentCode}`;
                         </div>
                         <input
                           type="range"
-                          min="14"
-                          max="48"
+                          min="10"
+                          max="40"
                           step="2"
                           value={docPaddingY}
                           onChange={(e) => setDocPaddingY(parseInt(e.target.value, 10))}
@@ -2709,9 +2823,9 @@ ${letterAgentCode}`;
                         </div>
                         <input
                           type="range"
-                          min="6"
-                          max="32"
-                          step="2"
+                          min="4"
+                          max="24"
+                          step="1"
                           value={docSectionSpacing}
                           onChange={(e) => setDocSectionSpacing(parseInt(e.target.value, 10))}
                           className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
@@ -2906,17 +3020,53 @@ ${letterAgentCode}`;
                     </div>
                     <div className="sm:col-span-2">
                       {activePreviewTab === "notice" ? (
-                        <div>
-                          <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                            Reason for Return (හේතුව)
-                          </label>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                              <span>Reason for Return (හේතුව)</span>
+                              <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
+                                {enableSinglish ? "🔤 Singlish Auto-Typing ON" : "English / Sinhala"}
+                              </span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => setEnableSinglish((prev) => !prev)}
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold border transition ${
+                                enableSinglish
+                                  ? "bg-purple-600 text-white border-purple-600 shadow-2xs"
+                                  : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
+                              }`}
+                              title="When enabled, typing in English phonetics automatically converts to Sinhala in real-time"
+                            >
+                              {enableSinglish ? "Singlish: ON ✓" : "Singlish: OFF"}
+                            </button>
+                          </div>
                           <input
                             type="text"
                             value={letterReason}
-                            onChange={(e) => setLetterReason(e.target.value)}
-                            placeholder="e.g. අයහපත් කාලගුණය (වැසි) / අලෙවි නියෝජිතයින් නොපැමිණීම"
-                            className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs focus:border-blue-500 focus:outline-none"
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setLetterReason(enableSinglish ? singlishToSinhala(val) : val);
+                            }}
+                            placeholder="Type in Singlish (e.g. 'ayahapath kalagunaya (wahi)') or in Sinhala..."
+                            className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs font-medium focus:border-purple-600 focus:outline-none"
                           />
+                          {/* Quick Preset Reasons */}
+                          <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
+                            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">
+                              Quick Reasons:
+                            </span>
+                            {COMMON_RETURN_REASONS.map((reason) => (
+                              <button
+                                key={reason}
+                                type="button"
+                                onClick={() => setLetterReason(reason)}
+                                className="px-2 py-0.5 rounded-lg text-[10px] font-medium bg-slate-100 hover:bg-purple-100 hover:text-purple-800 text-slate-700 border border-slate-200 transition"
+                              >
+                                {reason}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       ) : (
                         <div>
