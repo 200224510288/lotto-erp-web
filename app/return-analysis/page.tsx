@@ -772,6 +772,23 @@ export default function ReturnAnalysisPage() {
   const [letterDistrict, setLetterDistrict] = useState<string>("මහනුවර");
   const [letterOfficerName, setLetterOfficerName] = useState<string>("රුමේෂ් බණ්ඩාර");
   const [letterReason, setLetterReason] = useState<string>("");
+  const [showDigitalSignatures, setShowDigitalSignatures] = useState<boolean>(true);
+
+  // Check if letter belongs to S. W. O. Silva (030409 / 03/409)
+  const isSilva = useMemo(() => {
+    const code = (letterAgentCode || "").replace(/\D/g, "");
+    const name = (letterAgentName || "").toLowerCase();
+    return (
+      code.includes("030409") ||
+      code.includes("30409") ||
+      code.includes("03409") ||
+      code === "03/409" ||
+      name.includes("සිල්වා") ||
+      name.includes("silva") ||
+      name.includes("ඔස්මන්") ||
+      name.includes("osman")
+    );
+  }, [letterAgentCode, letterAgentName]);
   const [lotteryBookQtys, setLotteryBookQtys] = useState<Record<string, string>>({
     "අද කෝටිපති": "",
     "කප්රුක": "",
@@ -1637,6 +1654,11 @@ export default function ReturnAnalysisPage() {
                 <span className="px-2 py-0.5 rounded-lg bg-purple-50 text-purple-700 font-mono text-[11px] font-bold">
                   {selectedDate}
                 </span>
+                {isSilva && showDigitalSignatures && (
+                  <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[10px] flex items-center gap-1">
+                    <span>Stamp &amp; Sign Active ✓</span>
+                  </span>
+                )}
               </div>
 
               <div className="flex items-center gap-1.5 flex-wrap">
@@ -1787,6 +1809,23 @@ export default function ReturnAnalysisPage() {
                       />
                     </div>
                   )}
+
+                  <div className="col-span-2 pt-2 border-t border-blue-200/60 flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-slate-700 flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showDigitalSignatures}
+                        onChange={(e) => setShowDigitalSignatures(e.target.checked)}
+                        className="rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                      />
+                      <span>Show Official Signature &amp; Rubber Stamp (S. W. O. Silva)</span>
+                    </label>
+                    {isSilva && (
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                        Official Stamp Active ✓
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -1905,11 +1944,20 @@ export default function ReturnAnalysisPage() {
                 </div>
 
                 {/* 6. Agent Signature & Seal Block */}
-                <div className="flex justify-between items-end pt-5 sm:pt-6 text-[12px]">
+                <div className="flex justify-between items-end pt-6 sm:pt-7 text-[12px]">
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">අත්සන:</span>
-                      <span className="inline-block w-48 border-b border-dotted border-slate-700"></span>
+                      <div className="relative inline-block w-48">
+                        {isSilva && showDigitalSignatures && (
+                          <img
+                            src="/signatures/silva-signature.png"
+                            alt="S. W. O. Silva Signature"
+                            className="absolute -top-8 left-3 w-36 h-auto mix-blend-multiply pointer-events-none select-none"
+                          />
+                        )}
+                        <span className="block w-full border-b border-dotted border-slate-700"></span>
+                      </div>
                     </div>
                     <div>
                       <span>නම: </span>
@@ -1918,7 +1966,18 @@ export default function ReturnAnalysisPage() {
                     </div>
                   </div>
                   <div className="text-right pb-1">
-                    <span className="text-xs text-slate-600 font-semibold">රබර් මුද්‍රාව</span>
+                    {isSilva && showDigitalSignatures ? (
+                      <div className="flex flex-col items-end">
+                        <img
+                          src="/signatures/silva-seal.png"
+                          alt="S. W. O. Silva Rubber Stamp"
+                          className="w-36 sm:w-40 h-auto mix-blend-multiply select-none pointer-events-none transform -rotate-1 opacity-95"
+                        />
+                        <span className="text-[10px] text-slate-500 font-semibold mt-0.5">රබර් මුද්‍රාව</span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-600 font-semibold">රබර් මුද්‍රාව</span>
+                    )}
                   </div>
                 </div>
 
@@ -2062,12 +2121,30 @@ export default function ReturnAnalysisPage() {
                   <div className="text-justify text-black">
                     ඉහත දැක්වෙන්නේ මාගේ බෙදාහැරීමේ ප්‍රදේශයේ අදාළ දිනට ආපසු එවුම් (Return) සිදුකළ අලෙවි නියෝජිතයින්ගේ සත්‍ය තොරතුරු බවට සහතික කරමි. මෙම තොරතුරු නිල ලිපියට සාක්ෂි අනුබද්ධයක් (Proof Attachment) ලෙස ඉදිරිපත් කරමි.
                   </div>
-                  <div className="flex justify-end pt-3">
+                  <div className="flex justify-end items-end gap-5 pt-4">
                     <div className="text-center space-y-1">
-                      <div className="border-b border-dotted border-black w-48 mx-auto" />
+                      <div className="relative w-48 mx-auto">
+                        {isSilva && showDigitalSignatures && (
+                          <img
+                            src="/signatures/silva-signature.png"
+                            alt="S. W. O. Silva Signature"
+                            className="absolute -top-8 left-4 w-36 h-auto mix-blend-multiply pointer-events-none select-none"
+                          />
+                        )}
+                        <div className="border-b border-dotted border-black w-full" />
+                      </div>
                       <div className="font-bold text-black">දිස්ත්‍රික් බෙදාහැරීමේ අලෙවි නියෝජිත</div>
                       <div className="text-[10px] text-black font-mono">({letterAgentName} - {letterAgentCode})</div>
                     </div>
+                    {isSilva && showDigitalSignatures && (
+                      <div className="shrink-0 -mb-1">
+                        <img
+                          src="/signatures/silva-seal.png"
+                          alt="S. W. O. Silva Rubber Stamp"
+                          className="w-32 sm:w-36 h-auto mix-blend-multiply select-none pointer-events-none transform -rotate-1 opacity-95"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
