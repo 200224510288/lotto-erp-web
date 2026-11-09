@@ -26,6 +26,8 @@ import {
   Check,
   CheckSquare,
   Square,
+  RotateCcw,
+  Type,
 } from "lucide-react";
 
 import { listUploadedFilesByDate, listUploadedFilesByDateRange, UploadedFileRecord } from "../lib/uploadService";
@@ -774,6 +776,116 @@ export default function ReturnAnalysisPage() {
   const [letterReason, setLetterReason] = useState<string>("");
   const [showDigitalSignatures, setShowDigitalSignatures] = useState<boolean>(true);
 
+  // Document Styling & Layout Customization
+  const [settingsActiveTab, setSettingsActiveTab] = useState<"fields" | "styling">("fields");
+  const [docFontSize, setDocFontSize] = useState<number>(12.5);
+  const [docFontFamily, setDocFontFamily] = useState<"serif" | "sans" | "mono">("serif");
+  const [docLineHeight, setDocLineHeight] = useState<number>(1.45);
+  const [docPaddingX, setDocPaddingX] = useState<number>(32);
+  const [docPaddingY, setDocPaddingY] = useState<number>(28);
+  const [docSectionSpacing, setDocSectionSpacing] = useState<number>(14);
+  const [sigScale, setSigScale] = useState<number>(140);
+  const [sigOffsetY, setSigOffsetY] = useState<number>(-32);
+  const [sigTopSpace, setSigTopSpace] = useState<number>(24);
+  const [stampScale, setStampScale] = useState<number>(150);
+  const [stampRotation, setStampRotation] = useState<number>(-1);
+  const [officerSigSpace, setOfficerSigSpace] = useState<number>(24);
+  const [approvalSpace, setApprovalSpace] = useState<number>(28);
+
+  const docFontFamilyValue = useMemo(() => {
+    if (docFontFamily === "sans") {
+      return "'Noto Sans Sinhala', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+    }
+    if (docFontFamily === "mono") {
+      return "'Courier New', Courier, monospace";
+    }
+    return "'Noto Serif Sinhala', 'Times New Roman', Georgia, serif";
+  }, [docFontFamily]);
+
+  // Load saved styles from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = typeof window !== "undefined" ? localStorage.getItem("dlb_doc_styles_v1") : null;
+      if (saved) {
+        const p = JSON.parse(saved);
+        if (typeof p.docFontSize === "number") setDocFontSize(p.docFontSize);
+        if (["serif", "sans", "mono"].includes(p.docFontFamily)) setDocFontFamily(p.docFontFamily);
+        if (typeof p.docLineHeight === "number") setDocLineHeight(p.docLineHeight);
+        if (typeof p.docPaddingX === "number") setDocPaddingX(p.docPaddingX);
+        if (typeof p.docPaddingY === "number") setDocPaddingY(p.docPaddingY);
+        if (typeof p.docSectionSpacing === "number") setDocSectionSpacing(p.docSectionSpacing);
+        if (typeof p.sigScale === "number") setSigScale(p.sigScale);
+        if (typeof p.sigOffsetY === "number") setSigOffsetY(p.sigOffsetY);
+        if (typeof p.sigTopSpace === "number") setSigTopSpace(p.sigTopSpace);
+        if (typeof p.stampScale === "number") setStampScale(p.stampScale);
+        if (typeof p.stampRotation === "number") setStampRotation(p.stampRotation);
+        if (typeof p.officerSigSpace === "number") setOfficerSigSpace(p.officerSigSpace);
+        if (typeof p.approvalSpace === "number") setApprovalSpace(p.approvalSpace);
+      }
+    } catch {}
+  }, []);
+
+  // Save styles to localStorage on change
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem(
+          "dlb_doc_styles_v1",
+          JSON.stringify({
+            docFontSize,
+            docFontFamily,
+            docLineHeight,
+            docPaddingX,
+            docPaddingY,
+            docSectionSpacing,
+            sigScale,
+            sigOffsetY,
+            sigTopSpace,
+            stampScale,
+            stampRotation,
+            officerSigSpace,
+            approvalSpace,
+          })
+        );
+      }
+    } catch {}
+  }, [
+    docFontSize,
+    docFontFamily,
+    docLineHeight,
+    docPaddingX,
+    docPaddingY,
+    docSectionSpacing,
+    sigScale,
+    sigOffsetY,
+    sigTopSpace,
+    stampScale,
+    stampRotation,
+    officerSigSpace,
+    approvalSpace,
+  ]);
+
+  const resetDocStyles = () => {
+    setDocFontSize(12.5);
+    setDocFontFamily("serif");
+    setDocLineHeight(1.45);
+    setDocPaddingX(32);
+    setDocPaddingY(28);
+    setDocSectionSpacing(14);
+    setSigScale(140);
+    setSigOffsetY(-32);
+    setSigTopSpace(24);
+    setStampScale(150);
+    setStampRotation(-1);
+    setOfficerSigSpace(24);
+    setApprovalSpace(28);
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("dlb_doc_styles_v1");
+      }
+    } catch {}
+  };
+
   // Check if letter belongs to S. W. O. Silva (030409 / 03/409)
   const isSilva = useMemo(() => {
     const code = (letterAgentCode || "").replace(/\D/g, "");
@@ -1453,6 +1565,10 @@ export default function ReturnAnalysisPage() {
     <div className="min-h-screen bg-slate-100 text-slate-900 pb-16 font-sans print-clean-container">
       {/* Print Styles: isolates preview documents with perfect margins and supports multi-page bundle printing */}
       <style jsx global>{`
+        .dynamic-doc-spacing > :not([hidden]) ~ :not([hidden]) {
+          margin-top: var(--doc-section-gap, 14px) !important;
+        }
+
         @media print {
           @page {
             size: A4 portrait;
@@ -1504,13 +1620,16 @@ export default function ReturnAnalysisPage() {
             min-height: auto !important;
             height: auto !important;
             margin: 0 auto !important;
-            padding: 18mm 22mm 16mm 22mm !important;
+            padding: var(--print-padding, 18mm 22mm 16mm 22mm) !important;
             border: none !important;
             box-shadow: none !important;
             background: #ffffff !important;
             color: #000000 !important;
             overflow: visible !important;
             box-sizing: border-box !important;
+            font-size: var(--doc-font-size, 11pt) !important;
+            line-height: var(--doc-line-height, 1.45) !important;
+            font-family: var(--doc-font-family, serif) !important;
           }
 
           /* Multi-page break: page-break between multiple documents only */
@@ -1676,16 +1795,44 @@ export default function ReturnAnalysisPage() {
 
                 <button
                   type="button"
-                  onClick={() => setShowLetterSettings((prev) => !prev)}
+                  onClick={() => {
+                    if (showLetterSettings && settingsActiveTab === "fields") {
+                      setShowLetterSettings(false);
+                    } else {
+                      setShowLetterSettings(true);
+                      setSettingsActiveTab("fields");
+                    }
+                  }}
                   className={`p-2 rounded-xl border text-xs font-bold transition flex items-center gap-1 ${
-                    showLetterSettings
-                      ? "bg-blue-50 text-blue-700 border-blue-200"
+                    showLetterSettings && settingsActiveTab === "fields"
+                      ? "bg-blue-600 text-white border-blue-600 shadow-xs"
                       : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
                   }`}
                   title="Customize Letter Text & Fields"
                 >
                   <Settings className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Fields</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (showLetterSettings && settingsActiveTab === "styling") {
+                      setShowLetterSettings(false);
+                    } else {
+                      setShowLetterSettings(true);
+                      setSettingsActiveTab("styling");
+                    }
+                  }}
+                  className={`p-2 rounded-xl border text-xs font-bold transition flex items-center gap-1 ${
+                    showLetterSettings && settingsActiveTab === "styling"
+                      ? "bg-purple-600 text-white border-purple-600 shadow-xs"
+                      : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
+                  }`}
+                  title="Customize Fonts, Line Heights, Margins, Signatures & Stamp Layout"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Styles</span>
                 </button>
 
                 <button
@@ -1727,106 +1874,443 @@ export default function ReturnAnalysisPage() {
 
             {/* Quick Letter Customizer Drawer */}
             {showLetterSettings && (
-              <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4 space-y-3 text-xs animate-in fade-in duration-100 shadow-xs no-print">
-                <div className="flex items-center justify-between pb-1 border-b border-blue-100">
-                  <span className="font-black text-blue-900 uppercase tracking-wide">
-                    {activePreviewTab === "notice" ? "Customize Notice Details" : "Customize Proof Annexure Details"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowLetterSettings(false)}
-                    className="text-slate-400 hover:text-slate-700 font-bold"
-                  >
-                    ✕
-                  </button>
-                </div>
+              <div className="rounded-2xl border border-blue-200 bg-white p-4 space-y-4 text-xs animate-in fade-in duration-100 shadow-sm no-print">
+                {/* Header & Tabs */}
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                  <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setSettingsActiveTab("fields")}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                        settingsActiveTab === "fields"
+                          ? "bg-white text-blue-900 shadow-xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <Settings className="w-3.5 h-3.5" />
+                      <span>Details &amp; Fields</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSettingsActiveTab("styling")}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                        settingsActiveTab === "styling"
+                          ? "bg-purple-600 text-white shadow-xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                      <span>Styles &amp; Spacing</span>
+                    </button>
+                  </div>
 
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 block">District Distributor (නම)</label>
-                    <input
-                      type="text"
-                      value={letterAgentName}
-                      onChange={(e) => setLetterAgentName(e.target.value)}
-                      className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 block">Distributor Code (අංකය)</label>
-                    <input
-                      type="text"
-                      value={letterAgentCode}
-                      onChange={(e) => setLetterAgentCode(e.target.value)}
-                      className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-mono font-bold"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 block">Address Line 1</label>
-                    <input
-                      type="text"
-                      value={letterAddressLine1}
-                      onChange={(e) => setLetterAddressLine1(e.target.value)}
-                      className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 block">District / City</label>
-                    <input
-                      type="text"
-                      value={letterDistrict}
-                      onChange={(e) => setLetterDistrict(e.target.value)}
-                      className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 block">Officer Name</label>
-                    <input
-                      type="text"
-                      value={letterOfficerName}
-                      onChange={(e) => setLetterOfficerName(e.target.value)}
-                      className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
-                    />
-                  </div>
-                  {activePreviewTab === "notice" ? (
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-600 block">Reason for Return (හේතුව)</label>
-                      <input
-                        type="text"
-                        value={letterReason}
-                        onChange={(e) => setLetterReason(e.target.value)}
-                        placeholder="e.g. අයහපත් කාලගුණය (වැසි) / අලෙවි නියෝජිතයින් නොපැමිණීම"
-                        className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
-                      />
-                    </div>
-                  ) : (
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-600 block">Annexure Title</label>
-                      <input
-                        type="text"
-                        value={annexureTitle}
-                        onChange={(e) => setAnnexureTitle(e.target.value)}
-                        className="mt-0.5 w-full bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
-                      />
-                    </div>
-                  )}
-
-                  <div className="col-span-2 pt-2 border-t border-blue-200/60 flex items-center justify-between">
-                    <label className="text-[11px] font-bold text-slate-700 flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={showDigitalSignatures}
-                        onChange={(e) => setShowDigitalSignatures(e.target.checked)}
-                        className="rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
-                      />
-                      <span>Show Official Signature &amp; Rubber Stamp (S. W. O. Silva)</span>
-                    </label>
-                    {isSilva && (
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                        Official Stamp Active ✓
-                      </span>
+                  <div className="flex items-center gap-2">
+                    {settingsActiveTab === "styling" && (
+                      <button
+                        type="button"
+                        onClick={resetDocStyles}
+                        className="px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:text-purple-700 bg-slate-100 hover:bg-purple-50 rounded-lg border border-slate-200 transition flex items-center gap-1"
+                        title="Reset all font sizes, line heights, paddings and signature spacings to default"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Reset Defaults</span>
+                      </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => setShowLetterSettings(false)}
+                      className="text-slate-400 hover:text-slate-700 font-bold px-1.5 py-1"
+                    >
+                      ✕
+                    </button>
                   </div>
                 </div>
+
+                {settingsActiveTab === "fields" ? (
+                  /* ================= FIELDS TAB ================= */
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 block">District Distributor (නම)</label>
+                      <input
+                        type="text"
+                        value={letterAgentName}
+                        onChange={(e) => setLetterAgentName(e.target.value)}
+                        className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 block">Distributor Code (අංකය)</label>
+                      <input
+                        type="text"
+                        value={letterAgentCode}
+                        onChange={(e) => setLetterAgentCode(e.target.value)}
+                        className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-mono font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 block">Address Line 1</label>
+                      <input
+                        type="text"
+                        value={letterAddressLine1}
+                        onChange={(e) => setLetterAddressLine1(e.target.value)}
+                        className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 block">District / City</label>
+                      <input
+                        type="text"
+                        value={letterDistrict}
+                        onChange={(e) => setLetterDistrict(e.target.value)}
+                        className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 block">Officer Name</label>
+                      <input
+                        type="text"
+                        value={letterOfficerName}
+                        onChange={(e) => setLetterOfficerName(e.target.value)}
+                        className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
+                      />
+                    </div>
+                    {activePreviewTab === "notice" ? (
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-600 block">Reason for Return (හේතුව)</label>
+                        <input
+                          type="text"
+                          value={letterReason}
+                          onChange={(e) => setLetterReason(e.target.value)}
+                          placeholder="e.g. අයහපත් කාලගුණය (වැසි) / අලෙවි නියෝජිතයින් නොපැමිණීම"
+                          className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
+                        />
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-600 block">Annexure Title</label>
+                        <input
+                          type="text"
+                          value={annexureTitle}
+                          onChange={(e) => setAnnexureTitle(e.target.value)}
+                          className="mt-0.5 w-full bg-slate-50 focus:bg-white rounded-lg border border-slate-300 px-2.5 py-1 text-xs"
+                        />
+                      </div>
+                    )}
+
+                    <div className="col-span-2 pt-2 border-t border-slate-200 flex items-center justify-between">
+                      <label className="text-[11px] font-bold text-slate-700 flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showDigitalSignatures}
+                          onChange={(e) => setShowDigitalSignatures(e.target.checked)}
+                          className="rounded border-slate-300 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                        />
+                        <span>Show Official Signature &amp; Rubber Stamp (S. W. O. Silva)</span>
+                      </label>
+                      {isSilva && (
+                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                          Official Stamp Active ✓
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* ================= STYLES TAB ================= */
+                  <div className="space-y-4">
+                    {/* 1. Font Style & Typography Row */}
+                    <div className="bg-slate-50/80 rounded-xl p-3 border border-slate-200/80 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-black uppercase tracking-wide text-slate-700 flex items-center gap-1.5">
+                          <Type className="w-3.5 h-3.5 text-purple-600" />
+                          <span>Font Style &amp; Typography</span>
+                        </span>
+                        <span className="text-[10px] font-mono font-bold text-purple-700 bg-purple-100/60 px-2 py-0.5 rounded">
+                          {docFontFamily} · {docFontSize}px · {docLineHeight}x
+                        </span>
+                      </div>
+
+                      {/* Font Family Selection */}
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-600 block mb-1">Font Family (අකුරු විලාසය)</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {[
+                            { id: "serif", label: "Serif (සාම්ප්‍රදායික)", desc: "Formal Noto Serif" },
+                            { id: "sans", label: "Sans-Serif (නවීන)", desc: "Clean Inter / Arial" },
+                            { id: "mono", label: "Monospace", desc: "Typewriter / Mono" },
+                          ].map((font) => (
+                            <button
+                              key={font.id}
+                              type="button"
+                              onClick={() => setDocFontFamily(font.id as any)}
+                              className={`p-2 rounded-lg border text-left transition ${
+                                docFontFamily === font.id
+                                  ? "bg-purple-600 text-white border-purple-600 shadow-xs"
+                                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              <div className="text-[11px] font-bold">{font.label}</div>
+                              <div className={`text-[9px] ${docFontFamily === font.id ? "text-purple-100" : "text-slate-400"}`}>
+                                {font.desc}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Font Size & Line Height Sliders */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="text-[10px] font-bold text-slate-600">Font Size (අකුරු ප්‍රමාණය)</label>
+                            <span className="text-[10px] font-mono font-bold text-purple-700 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                              {docFontSize}px
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="10"
+                            max="16"
+                            step="0.5"
+                            value={docFontSize}
+                            onChange={(e) => setDocFontSize(parseFloat(e.target.value))}
+                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                          />
+                          <div className="flex gap-1.5 mt-1.5">
+                            {[11, 12, 12.5, 13.5, 14.5].map((s) => (
+                              <button
+                                key={s}
+                                type="button"
+                                onClick={() => setDocFontSize(s)}
+                                className={`flex-1 py-0.5 text-[9px] font-mono rounded border transition ${
+                                  docFontSize === s
+                                    ? "bg-purple-100 border-purple-300 text-purple-800 font-bold"
+                                    : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                                }`}
+                              >
+                                {s}px
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="text-[10px] font-bold text-slate-600">Line Height / Spacing (පේළි පරතරය)</label>
+                            <span className="text-[10px] font-mono font-bold text-purple-700 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                              {docLineHeight}x
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="1.20"
+                            max="1.85"
+                            step="0.05"
+                            value={docLineHeight}
+                            onChange={(e) => setDocLineHeight(parseFloat(e.target.value))}
+                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                          />
+                          <div className="flex gap-1.5 mt-1.5">
+                            {[
+                              { val: 1.25, label: "Tight" },
+                              { val: 1.45, label: "Normal" },
+                              { val: 1.65, label: "Relaxed" },
+                              { val: 1.80, label: "Loose" },
+                            ].map((h) => (
+                              <button
+                                key={h.val}
+                                type="button"
+                                onClick={() => setDocLineHeight(h.val)}
+                                className={`flex-1 py-0.5 text-[9px] rounded border transition ${
+                                  docLineHeight === h.val
+                                    ? "bg-purple-100 border-purple-300 text-purple-800 font-bold"
+                                    : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                                }`}
+                              >
+                                {h.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 2. Document Margins & Section Padding */}
+                    <div className="bg-slate-50/80 rounded-xl p-3 border border-slate-200/80 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-black uppercase tracking-wide text-slate-700">
+                          Document Padding &amp; Margins (ආන්තික පරතර)
+                        </span>
+                        <span className="text-[10px] font-mono font-bold text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200">
+                          Side: {docPaddingX}px ({Math.round((docPaddingX / 32) * 22)}mm) · Top/Btm: {docPaddingY}px
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="text-[10px] font-bold text-slate-600">Side Padding (දෙපස ආන්තිකය)</label>
+                            <span className="text-[10px] font-mono text-purple-700 font-bold">{docPaddingX}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="16"
+                            max="48"
+                            step="2"
+                            value={docPaddingX}
+                            onChange={(e) => setDocPaddingX(parseInt(e.target.value, 10))}
+                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="text-[10px] font-bold text-slate-600">Top/Btm Padding (ඉහළ/පහළ)</label>
+                            <span className="text-[10px] font-mono text-purple-700 font-bold">{docPaddingY}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="16"
+                            max="48"
+                            step="2"
+                            value={docPaddingY}
+                            onChange={(e) => setDocPaddingY(parseInt(e.target.value, 10))}
+                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="text-[10px] font-bold text-slate-600">Section Gap (කොටස් අතර හිඩැස)</label>
+                            <span className="text-[10px] font-mono text-purple-700 font-bold">{docSectionSpacing}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="8"
+                            max="26"
+                            step="2"
+                            value={docSectionSpacing}
+                            onChange={(e) => setDocSectionSpacing(parseInt(e.target.value, 10))}
+                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 3. Signature & Rubber Stamp Positioning & Size */}
+                    <div className="bg-slate-50/80 rounded-xl p-3 border border-slate-200/80 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-black uppercase tracking-wide text-slate-700">
+                          Signature &amp; Stamp Layout (අත්සන හා රබර් මුද්‍රාව)
+                        </span>
+                        {isSilva && showDigitalSignatures && (
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                            Digital Seal Active ✓
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="text-[10px] font-bold text-slate-600">Signature Size (අත්සනේ විශාලත්වය)</label>
+                            <span className="text-[10px] font-mono text-purple-700 font-bold">{sigScale}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="90"
+                            max="210"
+                            step="5"
+                            value={sigScale}
+                            onChange={(e) => setSigScale(parseInt(e.target.value, 10))}
+                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="text-[10px] font-bold text-slate-600">Signature Offset (අත්සන ඉහළ/පහළ)</label>
+                            <span className="text-[10px] font-mono text-purple-700 font-bold">{sigOffsetY}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-50"
+                            max="0"
+                            step="2"
+                            value={sigOffsetY}
+                            onChange={(e) => setSigOffsetY(parseInt(e.target.value, 10))}
+                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="text-[10px] font-bold text-slate-600">Signature Block Space (ඉහළ පරතරය)</label>
+                            <span className="text-[10px] font-mono text-purple-700 font-bold">{sigTopSpace}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="8"
+                            max="44"
+                            step="2"
+                            value={sigTopSpace}
+                            onChange={(e) => setSigTopSpace(parseInt(e.target.value, 10))}
+                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 border-t border-slate-200/70">
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="text-[10px] font-bold text-slate-600">Stamp Size (මුද්‍රාවේ විශාලත්වය)</label>
+                            <span className="text-[10px] font-mono text-purple-700 font-bold">{stampScale}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="90"
+                            max="220"
+                            step="5"
+                            value={stampScale}
+                            onChange={(e) => setStampScale(parseInt(e.target.value, 10))}
+                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="text-[10px] font-bold text-slate-600">Stamp Tilt / Rotation (ඇලවීම)</label>
+                            <span className="text-[10px] font-mono text-purple-700 font-bold">{stampRotation}°</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-10"
+                            max="10"
+                            step="1"
+                            value={stampRotation}
+                            onChange={(e) => setStampRotation(parseInt(e.target.value, 10))}
+                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="text-[10px] font-bold text-slate-600">Officer Sig Space (නිලධාරී අත්සන් හිඩැස)</label>
+                            <span className="text-[10px] font-mono text-purple-700 font-bold">{officerSigSpace}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="8"
+                            max="44"
+                            step="2"
+                            value={officerSigSpace}
+                            onChange={(e) => setOfficerSigSpace(parseInt(e.target.value, 10))}
+                            className="w-full accent-purple-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1836,10 +2320,21 @@ export default function ReturnAnalysisPage() {
               <div
                 ref={previewSheetRef}
                 id="letter-preview-document"
-                className={`w-full max-w-[560px] bg-white rounded-sm shadow-2xl p-7 sm:p-9 text-slate-900 space-y-4 font-serif text-[12px] sm:text-[13px] leading-relaxed border border-slate-200 ${
+                className={`w-full max-w-[560px] bg-white rounded-sm shadow-2xl text-slate-900 border border-slate-200 dynamic-doc-spacing ${
                   activePreviewTab === "notice" || printBundle ? "block printable-preview-doc" : "hidden"
                 }`}
-                style={{ minHeight: "760px" }}
+                style={{
+                  minHeight: "760px",
+                  fontSize: `${docFontSize}px`,
+                  lineHeight: docLineHeight,
+                  padding: `${docPaddingY}px ${docPaddingX}px`,
+                  fontFamily: docFontFamilyValue,
+                  ['--doc-section-gap' as any]: `${docSectionSpacing}px`,
+                  ['--print-padding' as any]: `${Math.round((docPaddingY / 28) * 18)}mm ${Math.round((docPaddingX / 32) * 22)}mm ${Math.round((docPaddingY / 28) * 16)}mm ${Math.round((docPaddingX / 32) * 22)}mm`,
+                  ['--doc-font-size' as any]: `${(docFontSize * 0.85).toFixed(1)}pt`,
+                  ['--doc-line-height' as any]: `${docLineHeight}`,
+                  ['--doc-font-family' as any]: docFontFamilyValue,
+                }}
               >
                 {/* 1. Top Section: Address Blocks */}
                 <div className="flex justify-between items-start gap-4 pt-1">
@@ -1944,7 +2439,10 @@ export default function ReturnAnalysisPage() {
                 </div>
 
                 {/* 6. Agent Signature & Seal Block */}
-                <div className="flex justify-between items-end pt-6 sm:pt-7 text-[12px]">
+                <div
+                  className="flex justify-between items-end text-[0.95em]"
+                  style={{ paddingTop: `${sigTopSpace}px` }}
+                >
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">අත්සන:</span>
@@ -1953,7 +2451,13 @@ export default function ReturnAnalysisPage() {
                           <img
                             src="/signatures/silva-signature.png"
                             alt="S. W. O. Silva Signature"
-                            className="absolute -top-8 left-3 w-36 h-auto mix-blend-multiply pointer-events-none select-none"
+                            className="absolute mix-blend-multiply pointer-events-none select-none"
+                            style={{
+                              top: `${sigOffsetY}px`,
+                              left: "12px",
+                              width: `${sigScale}px`,
+                              height: "auto",
+                            }}
                           />
                         )}
                         <span className="block w-full border-b border-dotted border-slate-700"></span>
@@ -1971,7 +2475,12 @@ export default function ReturnAnalysisPage() {
                         <img
                           src="/signatures/silva-seal.png"
                           alt="S. W. O. Silva Rubber Stamp"
-                          className="w-36 sm:w-40 h-auto mix-blend-multiply select-none pointer-events-none transform -rotate-1 opacity-95"
+                          className="mix-blend-multiply select-none pointer-events-none opacity-95"
+                          style={{
+                            width: `${stampScale}px`,
+                            height: "auto",
+                            transform: `rotate(${stampRotation}deg)`,
+                          }}
                         />
                         <span className="text-[10px] text-slate-500 font-semibold mt-0.5">රබර් මුද්‍රාව</span>
                       </div>
@@ -1982,17 +2491,20 @@ export default function ReturnAnalysisPage() {
                 </div>
 
                 {/* Heavy Divider */}
-                <hr className="border-t-2 border-slate-900 my-3" />
+                <hr className="border-t-2 border-slate-900 my-2" />
 
                 {/* 7. Field Officer Recommendation */}
-                <div className="space-y-2 text-[11.5px] sm:text-[12px]">
-                  <div className="font-bold text-[12.5px] text-slate-900">ක්ෂේත්‍ර නිලධාරී නිර්දේශය</div>
+                <div className="space-y-2 text-[0.95em]">
+                  <div className="font-bold text-[1.05em] text-slate-900">ක්ෂේත්‍ර නිලධාරී නිර්දේශය</div>
                   <div className="text-justify leading-relaxed text-slate-800">
                     මෙම බෙදාහැරීමේ අලෙවි නියෝජිත මහතාගේ ඉහත සඳහන් දිනට අදාලව අනුමත ප්‍රතිශතය ඉක්මවා ආපසු එවුම් ඉහළ යාම පිලිබඳ ඉදිරිපත්කර ඇති හේතුන් සාධාරණ බව තහවුරු කරමි./ නොකරමි.
                   </div>
                   <div className="text-slate-700 font-medium">කලාප කළමනාකරු / අලෙවි ප්‍රවර්ධන සහකාර</div>
 
-                  <div className="flex justify-between items-end pt-5 sm:pt-6">
+                  <div
+                    className="flex justify-between items-end"
+                    style={{ paddingTop: `${officerSigSpace}px` }}
+                  >
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
                         <span>අත්සන:</span>
@@ -2010,19 +2522,22 @@ export default function ReturnAnalysisPage() {
                 </div>
 
                 {/* Heavy Divider */}
-                <hr className="border-t-2 border-slate-900 my-3" />
+                <hr className="border-t-2 border-slate-900 my-2" />
 
                 {/* 8. Management Approval */}
-                <div className="space-y-2 pt-1 text-[11.5px] sm:text-[12px]">
+                <div className="space-y-2 pt-1 text-[0.95em]">
                   <div className="font-medium text-slate-900">කොමිස් මුදල කපා හැරීම අත්හිටුවීම අනුමත කරමි / නොකරමි.</div>
-                  <div className="pt-7 sm:pt-8 flex justify-between items-end">
+                  <div
+                    className="flex justify-between items-end"
+                    style={{ paddingTop: `${approvalSpace}px` }}
+                  >
                     <div className="space-y-1.5">
                       <div className="border-b border-dotted border-slate-700 w-60"></div>
-                      <div className="text-slate-800 font-medium text-[11.5px]">
+                      <div className="text-slate-800 font-medium text-[0.95em]">
                         නියෝජ්‍ය සාමාන්‍යාධිකාරී (අලෙවි) / සහකාර සාමාන්‍යාධිකාරී (විකුණුම්)
                       </div>
                     </div>
-                    <div className="text-right text-[11px] text-slate-500 font-mono">
+                    <div className="text-right text-[0.9em] text-slate-500 font-mono">
                       දිනය: ....................
                     </div>
                   </div>
@@ -2033,17 +2548,28 @@ export default function ReturnAnalysisPage() {
               <div
                 ref={proofSheetRef}
                 id="proof-preview-document"
-                className={`w-full max-w-[560px] bg-white rounded-sm shadow-2xl p-7 sm:p-9 text-black space-y-3.5 font-serif text-[11.5px] sm:text-[12px] leading-relaxed border border-black ${
+                className={`w-full max-w-[560px] bg-white rounded-sm shadow-2xl text-black border border-black dynamic-doc-spacing ${
                   activePreviewTab === "proof" || printBundle ? "block printable-preview-doc" : "hidden"
                 }`}
-                style={{ minHeight: "760px" }}
+                style={{
+                  minHeight: "760px",
+                  fontSize: `${docFontSize}px`,
+                  lineHeight: docLineHeight,
+                  padding: `${docPaddingY}px ${docPaddingX}px`,
+                  fontFamily: docFontFamilyValue,
+                  ['--doc-section-gap' as any]: `${docSectionSpacing}px`,
+                  ['--print-padding' as any]: `${Math.round((docPaddingY / 28) * 18)}mm ${Math.round((docPaddingX / 32) * 22)}mm ${Math.round((docPaddingY / 28) * 16)}mm ${Math.round((docPaddingX / 32) * 22)}mm`,
+                  ['--doc-font-size' as any]: `${(docFontSize * 0.85).toFixed(1)}pt`,
+                  ['--doc-line-height' as any]: `${docLineHeight}`,
+                  ['--doc-font-family' as any]: docFontFamilyValue,
+                }}
               >
                 {/* Title */}
                 <div className="text-center pb-2 border-b border-black">
-                  <h2 className="font-bold text-[14px] text-black">
+                  <h2 className="font-bold text-[1.15em] text-black">
                     {annexureTitle}
                   </h2>
-                  <div className="text-[11px] text-black font-sans mt-0.5">
+                  <div className="text-[0.9em] text-black font-sans mt-0.5">
                     දිනය: {selectedDate} | දිස්ත්‍රික් නියෝජිත: {letterAgentCode} ({letterAgentName})
                   </div>
                 </div>
@@ -2058,7 +2584,7 @@ export default function ReturnAnalysisPage() {
                       </p>
                     </div>
                   ) : (
-                    <table className="w-full border-collapse border border-black text-[11px] sm:text-[11.5px] text-black bg-white">
+                    <table className="w-full border-collapse border border-black text-[0.92em] text-black bg-white">
                       <thead>
                         <tr className="border-b border-black bg-white text-center font-bold text-black">
                           <th className="border border-black py-1.5 px-1.5 w-[7%]">#</th>
@@ -2117,18 +2643,30 @@ export default function ReturnAnalysisPage() {
                 </div>
 
                 {/* Verification Sign-off */}
-                <div className="pt-3 text-[11px] sm:text-[11.5px] leading-relaxed text-black space-y-4">
+                <div
+                  className="text-black space-y-4 text-[0.95em]"
+                  style={{ paddingTop: `${sigTopSpace}px` }}
+                >
                   <div className="text-justify text-black">
                     ඉහත දැක්වෙන්නේ මාගේ බෙදාහැරීමේ ප්‍රදේශයේ අදාළ දිනට ආපසු එවුම් (Return) සිදුකළ අලෙවි නියෝජිතයින්ගේ සත්‍ය තොරතුරු බවට සහතික කරමි. මෙම තොරතුරු නිල ලිපියට සාක්ෂි අනුබද්ධයක් (Proof Attachment) ලෙස ඉදිරිපත් කරමි.
                   </div>
-                  <div className="flex justify-end items-end gap-5 pt-4">
+                  <div
+                    className="flex justify-end items-end gap-5"
+                    style={{ paddingTop: `${Math.round(sigTopSpace * 0.7)}px` }}
+                  >
                     <div className="text-center space-y-1">
                       <div className="relative w-48 mx-auto">
                         {isSilva && showDigitalSignatures && (
                           <img
                             src="/signatures/silva-signature.png"
                             alt="S. W. O. Silva Signature"
-                            className="absolute -top-8 left-4 w-36 h-auto mix-blend-multiply pointer-events-none select-none"
+                            className="absolute mix-blend-multiply pointer-events-none select-none"
+                            style={{
+                              top: `${sigOffsetY}px`,
+                              left: "16px",
+                              width: `${sigScale}px`,
+                              height: "auto",
+                            }}
                           />
                         )}
                         <div className="border-b border-dotted border-black w-full" />
@@ -2141,7 +2679,12 @@ export default function ReturnAnalysisPage() {
                         <img
                           src="/signatures/silva-seal.png"
                           alt="S. W. O. Silva Rubber Stamp"
-                          className="w-32 sm:w-36 h-auto mix-blend-multiply select-none pointer-events-none transform -rotate-1 opacity-95"
+                          className="mix-blend-multiply select-none pointer-events-none opacity-95"
+                          style={{
+                            width: `${Math.round(stampScale * 0.9)}px`,
+                            height: "auto",
+                            transform: `rotate(${stampRotation}deg)`,
+                          }}
                         />
                       </div>
                     )}
