@@ -2336,8 +2336,8 @@ ${letterAgentCode}`;
                   </div>
                 </div>
 
-                {/* Heavy Divider */}
-                <hr className="border-t-2 border-slate-900 my-1.5" />
+                {/* Divider Line */}
+                <hr className="border-t border-slate-700 my-1.5" />
 
                 {/* 7. Field Officer Recommendation */}
                 <div className="space-y-2 text-[0.95em]">
@@ -2367,8 +2367,8 @@ ${letterAgentCode}`;
                   </div>
                 </div>
 
-                {/* Heavy Divider */}
-                <hr className="border-t-2 border-slate-900 my-2" />
+                {/* Divider Line */}
+                <hr className="border-t border-slate-700 my-2" />
 
                 {/* 8. Management Approval */}
                 <div
