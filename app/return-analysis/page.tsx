@@ -28,6 +28,10 @@ import {
   Square,
   RotateCcw,
   Type,
+  Mail,
+  Send,
+  Copy,
+  ExternalLink,
 } from "lucide-react";
 
 import { listUploadedFilesByDate, listUploadedFilesByDateRange, UploadedFileRecord } from "../lib/uploadService";
@@ -777,6 +781,12 @@ export default function ReturnAnalysisPage() {
   const [letterReason, setLetterReason] = useState<string>("");
   const [showDigitalSignatures, setShowDigitalSignatures] = useState<boolean>(true);
 
+  // Email Dispatch State (Target: rumeshdlb@gmail.com, CC: mou@dlb.lk)
+  const [showEmailModal, setShowEmailModal] = useState<boolean>(false);
+  const [emailTo, setEmailTo] = useState<string>("rumeshdlb@gmail.com");
+  const [emailCc, setEmailCc] = useState<string>("mou@dlb.lk");
+  const [copyEmailSuccess, setCopyEmailSuccess] = useState<boolean>(false);
+
   // Document Styling & Layout Customization
   const [docFontSize, setDocFontSize] = useState<number>(12.5);
   const [docFontFamily, setDocFontFamily] = useState<"serif" | "sans" | "mono">("serif");
@@ -928,6 +938,81 @@ export default function ReturnAnalysisPage() {
   const [annexureTitle, setAnnexureTitle] = useState<string>(
     "අනුමත 5% සීමාව ඉක්මවා ආපසු එවුම් සිදුකළ අලෙවි නියෝජිතයන්ගේ සාක්ෂි ලේඛනය"
   );
+
+  // Email Subject and Body for Officer & DLB MOU Submission (To: rumeshdlb@gmail.com, CC: mou@dlb.lk)
+  const emailSubject = useMemo(() => {
+    return `අනුමත ප්‍රතිශතය ඉක්මවා සිදුකරන ආපසු එවුම් (Return) - ${letterDistrict} - ${letterAgentName} (${letterAgentCode}) - ${selectedDate}`;
+  }, [letterDistrict, letterAgentName, letterAgentCode, selectedDate]);
+
+  const emailBody = useMemo(() => {
+    const bookQtysSummary = OFFICIAL_SINHALA_LOTTERIES.map((name, idx) => {
+      const qty = lotteryBookQtys[name] || "0";
+      return `  ${idx + 1}. ${name}: ${qty} පොත්`;
+    }).join("\n");
+
+    return `ගරු නිලධාරීතුමනි / To: ${letterOfficerName} (rumeshdlb@gmail.com),
+CC: mou@dlb.lk
+
+අනුමත ප්‍රතිශතය ඉක්මවා සිදුකරන ආපසු එවුම් (Return) සම්බන්ධව දැනුම් දීම.
+
+දිනය: ${selectedDate}
+දිස්ත්‍රික්කය: ${letterDistrict}
+බෙදාහැරීමේ අලෙවි නියෝජිත: ${letterAgentName} (අංකය: ${letterAgentCode})
+ලිපිනය: ${letterAddressLine1} ${letterAddressLine2} ${letterDistrict}
+
+ආපසු එවුම් ප්‍රමාණයන් (පොත්):
+${bookQtysSummary}
+
+${letterReason ? `හේතුව: ${letterReason}\n` : ""}
+${
+  proofSelectedAgents.size > 0
+    ? `සාක්ෂි ලේඛනය (Proof Annexure): අනුමත ප්‍රතිශතය ඉක්මවූ නියෝජිතයින් ${proofSelectedAgents.size} දෙනෙකුගේ විස්තර ඇතුලත් කර ඇත.\n`
+    : ""
+}
+ඉහත කරුණු සලකා බලා අවශ්‍ය නිර්දේශය ලබාදෙන මෙන් කාරුණිකව ඉල්ලා සිටිමි.
+(අදාළ නිල ලිපිය සහ සාක්ෂි ලේඛනය PDF ගොනුව මේ සමඟ අමුණා ඇත.)
+
+ස්තූතියි,
+${letterAgentName}
+${letterAgentCode}`;
+  }, [
+    letterOfficerName,
+    selectedDate,
+    letterDistrict,
+    letterAgentName,
+    letterAgentCode,
+    letterAddressLine1,
+    letterAddressLine2,
+    lotteryBookQtys,
+    letterReason,
+    proofSelectedAgents,
+  ]);
+
+  const handleSendMailto = () => {
+    const to = encodeURIComponent(emailTo.trim() || "rumeshdlb@gmail.com");
+    const cc = encodeURIComponent(emailCc.trim() || "mou@dlb.lk");
+    const subject = encodeURIComponent(emailSubject);
+    const body = encodeURIComponent(emailBody);
+    window.location.href = `mailto:${to}?cc=${cc}&subject=${subject}&body=${body}`;
+  };
+
+  const handleOpenGmailWeb = () => {
+    const to = encodeURIComponent(emailTo.trim() || "rumeshdlb@gmail.com");
+    const cc = encodeURIComponent(emailCc.trim() || "mou@dlb.lk");
+    const subject = encodeURIComponent(emailSubject);
+    const body = encodeURIComponent(emailBody);
+    const url = `https://mail.google.com/mail/?view=cm&fs=1&to=${to}&cc=${cc}&su=${subject}&body=${body}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const handleCopyEmailContent = async () => {
+    try {
+      const fullText = `To: ${emailTo.trim() || "rumeshdlb@gmail.com"}\nCC: ${emailCc.trim() || "mou@dlb.lk"}\nSubject: ${emailSubject}\n\n${emailBody}`;
+      await navigator.clipboard.writeText(fullText);
+      setCopyEmailSuccess(true);
+      setTimeout(() => setCopyEmailSuccess(false), 2200);
+    } catch {}
+  };
 
   const previewSheetRef = useRef<HTMLDivElement>(null);
   const proofSheetRef = useRef<HTMLDivElement>(null);
@@ -1961,6 +2046,16 @@ export default function ReturnAnalysisPage() {
                   <Layers className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Bundle</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowEmailModal(true)}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5"
+                  title="Email Notice & Proof to rumeshdlb@gmail.com (CC: mou@dlb.lk)"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>Email</span>
+                </button>
               </div>
             </div>
 
@@ -2853,6 +2948,35 @@ export default function ReturnAnalysisPage() {
                       </span>
                     )}
                   </div>
+
+                  {/* Email Destination & Submission Block */}
+                  <div className="pt-3 border-t border-slate-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black uppercase tracking-wide text-slate-800 flex items-center gap-1.5">
+                        <Mail className="w-4 h-4 text-emerald-600" />
+                        <span>Officer &amp; DLB Email Submission</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowEmailModal(true)}
+                        className="px-2.5 py-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-300 transition flex items-center gap-1 shadow-2xs"
+                      >
+                        <Send className="w-3 h-3 text-emerald-700" />
+                        <span>Mail to Rumesh &amp; DLB</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                        <span className="text-slate-500 font-semibold block text-[10px]">To (Field Officer):</span>
+                        <span className="font-mono font-bold text-slate-900">{emailTo}</span>
+                      </div>
+                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                        <span className="text-slate-500 font-semibold block text-[10px]">CC (Management Unit):</span>
+                        <span className="font-mono font-bold text-slate-900">{emailCc}</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -3351,6 +3475,182 @@ export default function ReturnAnalysisPage() {
         )}
       </div>
     )}
+
+      {/* =========================================================
+          EMAIL SUBMISSION MODAL (To: rumeshdlb@gmail.com, CC: mou@dlb.lk)
+          ========================================================= */}
+      {showEmailModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150 no-print">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-2xl w-full p-5 sm:p-6 space-y-4 max-h-[92vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-emerald-100 text-emerald-800">
+                  <Mail className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Email Return Notice &amp; Proof Annexure
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Official email to Field Officer <span className="font-bold text-slate-700">Rumesh Bandara</span> with CC to <span className="font-bold text-slate-700">DLB MOU</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEmailModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition font-bold"
+                title="Close modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Recipient Chips & Form Fields */}
+            <div className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                    To (Field Officer Email)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="email"
+                      value={emailTo}
+                      onChange={(e) => setEmailTo(e.target.value)}
+                      className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:border-emerald-500 focus:outline-none"
+                    />
+                    <span className="absolute right-2.5 top-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800">
+                      Primary
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                    CC (DLB MOU Unit)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="email"
+                      value={emailCc}
+                      onChange={(e) => setEmailCc(e.target.value)}
+                      className="w-full bg-slate-50 focus:bg-white rounded-xl border border-slate-300 px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:border-emerald-500 focus:outline-none"
+                    />
+                    <span className="absolute right-2.5 top-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-800">
+                      CC
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                  Subject Line
+                </label>
+                <input
+                  type="text"
+                  readOnly
+                  value={emailSubject}
+                  className="w-full bg-slate-100 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 select-all"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-bold text-slate-700">
+                    Message Content (Pre-formatted Official Text)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleCopyEmailContent}
+                    className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 transition"
+                  >
+                    {copyEmailSuccess ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        <span className="font-bold">Copied to Clipboard!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy Full Text</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                <textarea
+                  readOnly
+                  rows={8}
+                  value={emailBody}
+                  className="w-full bg-slate-50 rounded-xl border border-slate-200 p-3 text-xs font-sans text-slate-800 select-all leading-relaxed"
+                />
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span className="text-[11px] font-medium leading-normal">
+                    Browser security prevents auto-attaching files. Click <b>Download PDF</b> below, then attach the downloaded file in your email app.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDownloadActivePdf}
+                  disabled={isDownloadingLetter}
+                  className="shrink-0 px-3 py-1.5 rounded-xl bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold text-xs transition flex items-center gap-1.5 shadow-2xs"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download PDF</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowEmailModal(false)}
+                className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-bold text-xs transition"
+              >
+                Close
+              </button>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleCopyEmailContent}
+                  className="px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition flex items-center gap-1.5 shadow-2xs"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>{copyEmailSuccess ? "Copied!" : "Copy Text"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSendMailto}
+                  className="px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 text-xs font-bold transition flex items-center gap-1.5 shadow-2xs"
+                  title="Open default desktop email app (Outlook / Windows Mail)"
+                >
+                  <Send className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Open Mail App</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleOpenGmailWeb}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                  title="Open Gmail in browser with pre-filled To: rumeshdlb@gmail.com, CC: mou@dlb.lk"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Send via Gmail Web</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   </div>
