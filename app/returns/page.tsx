@@ -1354,10 +1354,10 @@ export default function ReturnsPage() {
                           )}
                         </td>
                         <td className="px-2 py-1 text-right text-indigo-800">
-                          <span className="font-bold">{(totalDlbReturns * 10).toLocaleString()} tkt</span>
+                          <span className="font-bold">{(allRawReturnsSum * 10).toLocaleString()} tkt</span>
                           <span className="block text-[9px] font-normal text-gray-500">
-                            {totalDlbReturns.toLocaleString()} bks
-                            {waivedCount > 0 && ` (${(allRawReturnsSum * 10).toLocaleString()} tkt total)`}
+                            {allRawReturnsSum.toLocaleString()} bks
+                            {waivedCount > 0 && ` (${(totalDlbReturns * 10).toLocaleString()} active · ${((allRawReturnsSum - totalDlbReturns) * 10).toLocaleString()} waived)`}
                           </span>
                         </td>
                         <td className="px-2 py-1 text-right text-gray-800 font-mono">
@@ -1519,12 +1519,12 @@ export default function ReturnsPage() {
                 )}
               </div>
               <div className="text-xl font-black text-slate-900 mt-0.5">
-                {(totalDlbReturns * 10).toLocaleString()}
+                {(allRawReturnsSum * 10).toLocaleString()}
                 <span className="text-xs font-normal text-slate-500 ml-1">tkt</span>
               </div>
               <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                {totalDlbReturns.toLocaleString()} bks
-                {waivedCount > 0 && ` (${(allRawReturnsSum * 10).toLocaleString()} tkt total)`}
+                {allRawReturnsSum.toLocaleString()} bks
+                {waivedCount > 0 && ` (${(totalDlbReturns * 10).toLocaleString()} active · ${((allRawReturnsSum - totalDlbReturns) * 10).toLocaleString()} waived)`}
               </div>
             </div>
 
